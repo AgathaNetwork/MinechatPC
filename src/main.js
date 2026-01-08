@@ -1,5 +1,7 @@
-const { app, BrowserWindow, Menu, ipcMain, session } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, session, shell, Tray } = require('electron');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 
 const START_URL = 'https://front-dev.agatha.org.cn';
 const PERSIST_PARTITION = 'persist:agatha-front';
@@ -332,7 +334,196 @@ function createBrowserWindow({ url, isPopup = false } = {}) {
   return win;
 }
 
+let tray = null;
+let mainWindow = null;
+let isQuitting = false;
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function toggleMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isVisible()) mainWindow.hide();
+  else showMainWindow();
+}
+
+function createTray() {
+  if (tray) return tray;
+
+  const iconPath = path.join(__dirname, '..', 'assets', 'icon.ico');
+  tray = new Tray(iconPath);
+  tray.setToolTip(app.getName());
+
+  const menu = Menu.buildFromTemplate([
+    {
+      label: '显示/隐藏',
+      click: () => toggleMainWindow()
+    },
+    { type: 'separator' },
+    {
+      label: '退出',
+      click: () => {
+        isQuitting = true;
+        app.quit();
+      }
+    }
+  ]);
+
+  tray.setContextMenu(menu);
+  tray.on('click', () => showMainWindow());
+  tray.on('double-click', () => showMainWindow());
+  return tray;
+}
+
 let settingsWindow = null;
+
+function formatBytes(bytes) {
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) return null;
+  return bytes;
+}
+
+async function dirSizeBytes(dirPath) {
+  let total = 0;
+  const stack = [dirPath];
+
+  while (stack.length) {
+    const current = stack.pop();
+    let entries;
+    try {
+      entries = await fs.promises.readdir(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const fullPath = path.join(current, entry.name);
+      try {
+        if (entry.isDirectory()) {
+          stack.push(fullPath);
+        } else if (entry.isFile()) {
+          const st = await fs.promises.stat(fullPath);
+          total += st.size || 0;
+        }
+      } catch {
+        // ignore unreadable files
+      }
+    }
+  }
+
+  return total;
+}
+
+async function getCacheInfoForPersistentSession() {
+  const sess = session.fromPartition(PERSIST_PARTITION);
+
+  let httpCacheBytes = null;
+  try {
+    httpCacheBytes = await sess.getCacheSize();
+  } catch {
+    httpCacheBytes = null;
+  }
+
+  // Best-effort: sum known cache folders under the partition storage path.
+  let storagePath = null;
+  try {
+    if (typeof sess.getStoragePath === 'function') {
+      storagePath = sess.getStoragePath();
+    }
+  } catch {
+    storagePath = null;
+  }
+
+  const diskCacheFolders = [];
+  let diskCacheTotalBytes = null;
+  if (storagePath) {
+    const candidates = [
+      { name: 'Cache', rel: 'Cache' },
+      { name: 'Code Cache', rel: 'Code Cache' },
+      { name: 'GPUCache', rel: 'GPUCache' },
+      { name: 'Service Worker', rel: 'Service Worker' },
+      { name: 'CacheStorage', rel: 'CacheStorage' }
+    ];
+
+    let total = 0;
+    for (const c of candidates) {
+      const p = path.join(storagePath, c.rel);
+      try {
+        const st = await fs.promises.stat(p);
+        if (!st.isDirectory()) continue;
+      } catch {
+        continue;
+      }
+
+      const bytes = await dirSizeBytes(p);
+      diskCacheFolders.push({ name: c.name, bytes });
+      total += bytes;
+    }
+    diskCacheTotalBytes = total;
+  }
+
+  return {
+    httpCacheBytes: formatBytes(httpCacheBytes),
+    diskCacheTotalBytes: formatBytes(diskCacheTotalBytes),
+    diskCacheFolders
+  };
+}
+
+function getPersistentSessionStoragePath() {
+  try {
+    const sess = session.fromPartition(PERSIST_PARTITION);
+    if (typeof sess.getStoragePath === 'function') {
+      return sess.getStoragePath();
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+function formatBytesForDisplay(bytes) {
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) return null;
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex++;
+  }
+  const digits = unitIndex === 0 ? 0 : unitIndex === 1 ? 1 : 2;
+  return `${value.toFixed(digits)} ${units[unitIndex]}`;
+}
+
+function getSystemInfo() {
+  const cpus = os.cpus() || [];
+  const cpuModel = cpus[0]?.model || null;
+
+  let timeZone = null;
+  try {
+    timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } catch {
+    timeZone = null;
+  }
+
+  return {
+    platform: process.platform,
+    arch: process.arch,
+    osRelease: os.release(),
+    cpu: cpuModel,
+    cpuCount: cpus.length || null,
+    totalMem: formatBytesForDisplay(os.totalmem()),
+    freeMem: formatBytesForDisplay(os.freemem()),
+    appVersion: app.getVersion(),
+    versions: {
+      electron: process.versions.electron,
+      chrome: process.versions.chrome,
+      node: process.versions.node
+    },
+    timeZone
+  };
+}
 
 function createOrFocusSettingsWindow(parentWindow) {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
@@ -340,6 +531,8 @@ function createOrFocusSettingsWindow(parentWindow) {
     settingsWindow.focus();
     return settingsWindow;
   }
+
+  const iconPath = path.join(__dirname, '..', 'assets', 'icon.ico');
 
   settingsWindow = new BrowserWindow({
     width: 520,
@@ -349,11 +542,13 @@ function createOrFocusSettingsWindow(parentWindow) {
     maximizable: false,
     show: false,
     autoHideMenuBar: true,
+    icon: iconPath,
     parent: parentWindow || undefined,
     modal: false,
     // Use native frame to keep it simple.
     frame: true,
     webPreferences: {
+      preload: path.join(__dirname, 'settings-preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -367,27 +562,7 @@ function createOrFocusSettingsWindow(parentWindow) {
     settingsWindow = null;
   });
 
-  const html = `<!doctype html>
-  <html lang="zh-CN">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>设置</title>
-    <style>
-      html, body { height: 100%; margin: 0; }
-      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; padding: 16px; box-sizing: border-box; }
-      h1 { font-size: 16px; margin: 0 0 12px; }
-      .hint { font-size: 13px; opacity: 0.8; line-height: 1.4; }
-    </style>
-  </head>
-  <body>
-    <h1>设置</h1>
-    <div class="hint">这里是设置窗口（后续可以把具体设置项加在这里）。</div>
-  </body>
-  </html>`;
-
-  const dataUrl = `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
-  settingsWindow.loadURL(dataUrl);
+  settingsWindow.loadFile(path.join(__dirname, 'settings.html'));
 
   return settingsWindow;
 }
@@ -404,6 +579,13 @@ function createMainWindow() {
   Menu.setApplicationMenu(null);
 
   const win = createBrowserWindow({ url: START_URL, isPopup: false });
+
+  // Close button (X) should only hide the window; quit only from tray menu.
+  win.on('close', (event) => {
+    if (isQuitting) return;
+    event.preventDefault();
+    win.hide();
+  });
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     // Microsoft auth often requires a real popup with opener relationship.
@@ -448,7 +630,23 @@ app.whenReady().then(() => {
   const persistentSession = session.fromPartition(PERSIST_PARTITION);
   installPermanentCacheHeaders(persistentSession);
 
-  createMainWindow();
+  mainWindow = createMainWindow();
+  createTray();
+
+  ipcMain.handle('agatha-settings:get-cache-info', async () => {
+    return getCacheInfoForPersistentSession();
+  });
+
+  ipcMain.handle('agatha-settings:open-cache-folder', async () => {
+    const storagePath = getPersistentSessionStoragePath();
+    if (!storagePath) return { ok: false, error: 'storagePath_unavailable' };
+    const err = await shell.openPath(storagePath);
+    return err ? { ok: false, error: err } : { ok: true };
+  });
+
+  ipcMain.handle('agatha-settings:get-system-info', async () => {
+    return getSystemInfo();
+  });
 
   // IPC: window controls from the injected overlay (not cookies).
   ipcMain.on('agatha-window-control', (event, action) => {
@@ -464,13 +662,18 @@ app.whenReady().then(() => {
   });
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow();
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      mainWindow = createMainWindow();
     }
+    showMainWindow();
   });
 });
 
 app.on('window-all-closed', () => {
-  // On Windows/Linux, quit when all windows are closed.
-  if (process.platform !== 'darwin') app.quit();
+  // Do not quit when all windows are closed; the app lives in the tray.
+  // It should only fully exit via the tray "退出" action.
+});
+
+app.on('before-quit', () => {
+  isQuitting = true;
 });

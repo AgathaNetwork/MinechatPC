@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>设置</title>
+    <style>
+      html, body { height: 100%; margin: 0; }
+      body {
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        padding: 16px;
+        box-sizing: border-box;
+      }
+      header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+      h1 { font-size: 16px; margin: 0; }
+      button { padding: 6px 10px; font-size: 13px; }
+      .tabs { display: flex; gap: 8px; margin-top: 12px; }
+      .divider { height: 1px; background: rgba(0,0,0,0.18); margin-top: 10px; }
+      .tab {
+        padding: 6px 10px;
+        font-size: 13px;
+        border: 1px solid rgba(0,0,0,0.15);
+        background: transparent;
+      }
+      .tab[aria-selected="true"] {
+        background: rgba(0,0,0,0.06);
+      }
+      .panel { margin-top: 14px; display: none; }
+      .panel.__open { display: block; }
+      .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+      .label { font-size: 13px; opacity: 0.8; margin: 0 0 8px; }
+
+      table { width: 100%; border-collapse: collapse; }
+      th, td { text-align: left; padding: 8px 10px; font-size: 13px; }
+      thead th { font-size: 12px; opacity: 0.8; border-bottom: 1px solid rgba(0,0,0,0.18); }
+      tbody td { border-bottom: 1px solid rgba(0,0,0,0.10); }
+      tbody tr:last-child td { border-bottom: 0; }
+      td.value { text-align: right; white-space: nowrap; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+
+      /* Indent cache detail rows under "磁盘缓存总计". */
+      tr.cache-sub td:first-child { padding-left: 26px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>设置</h1>
+      <div></div>
+    </header>
+
+    <div class="tabs" role="tablist" aria-label="设置">
+      <button class="tab" id="tab-cache" type="button" role="tab" aria-selected="true" aria-controls="panel-cache">缓存</button>
+      <button class="tab" id="tab-system" type="button" role="tab" aria-selected="false" aria-controls="panel-system">系统</button>
+    </div>
+
+    <div class="divider" role="separator" aria-hidden="true"></div>
+
+    <section class="panel __open" id="panel-cache" role="tabpanel" aria-labelledby="tab-cache">
+      <div class="toolbar">
+        <button id="refreshCache" type="button">刷新缓存大小</button>
+        <button id="openCacheFolder" type="button">打开缓存文件夹</button>
+      </div>
+
+      <div class="label">缓存占用</div>
+      <table aria-label="缓存占用">
+        <thead>
+          <tr>
+            <th>项目</th>
+            <th class="value">大小</th>
+          </tr>
+        </thead>
+        <tbody id="cacheTable">
+          <tr><td>HTTP 缓存</td><td class="value" id="cell-http">-</td></tr>
+          <tr><td>磁盘缓存总计</td><td class="value" id="cell-disk-total">-</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel" id="panel-system" role="tabpanel" aria-labelledby="tab-system">
+      <div class="label">系统信息</div>
+      <table aria-label="系统信息">
+        <thead>
+          <tr>
+            <th>项目</th>
+            <th class="value">值</th>
+          </tr>
+        </thead>
+        <tbody id="systemTable">
+          <tr><td>系统时钟</td><td class="value mono" id="sys-clock">-</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+
+      function formatBytes(bytes) {
+        if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) return '-';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        let value = bytes;
+        let unitIndex = 0;
+        while (value >= 1024 && unitIndex < units.length - 1) {
+          value /= 1024;
+          unitIndex++;
+        }
+        const digits = unitIndex === 0 ? 0 : unitIndex === 1 ? 1 : 2;
+        return `${value.toFixed(digits)} ${units[unitIndex]}`;
+      }
+
+      async function refresh() {
+        try {
+          $('refreshCache').disabled = true;
+          const api = window.agathaSettings;
+          if (!api || typeof api.getCacheInfo !== 'function') {
+            $('cell-http').textContent = '不可用';
+            return;
+          }
+
+          const info = await api.getCacheInfo();
+          $('cell-http').textContent = formatBytes(info.httpCacheBytes);
+          $('cell-disk-total').textContent = info.diskCacheTotalBytes != null ? formatBytes(info.diskCacheTotalBytes) : '-';
+
+          const tbody = $('cacheTable');
+          // keep first 2 rows (http + total)
+          while (tbody.children.length > 2) tbody.removeChild(tbody.lastElementChild);
+          if (Array.isArray(info.diskCacheFolders)) {
+            for (const entry of info.diskCacheFolders) {
+              const tr = document.createElement('tr');
+              tr.className = 'cache-sub';
+              const tdName = document.createElement('td');
+              tdName.textContent = entry.name;
+              const tdVal = document.createElement('td');
+              tdVal.className = 'value';
+              tdVal.textContent = formatBytes(entry.bytes);
+              tr.appendChild(tdName);
+              tr.appendChild(tdVal);
+              tbody.appendChild(tr);
+            }
+          }
+        } catch (e) {
+          $('cell-http').textContent = '读取失败';
+        } finally {
+          $('refreshCache').disabled = false;
+        }
+      }
+
+      async function openCacheFolder() {
+        const api = window.agathaSettings;
+        if (!api || typeof api.openCacheFolder !== 'function') return;
+        try {
+          $('openCacheFolder').disabled = true;
+          await api.openCacheFolder();
+        } finally {
+          $('openCacheFolder').disabled = false;
+        }
+      }
+
+      function setTab(active) {
+        const isCache = active === 'cache';
+        $('tab-cache').setAttribute('aria-selected', String(isCache));
+        $('tab-system').setAttribute('aria-selected', String(!isCache));
+        $('panel-cache').classList.toggle('__open', isCache);
+        $('panel-system').classList.toggle('__open', !isCache);
+      }
+
+      function upsertSystemRow(label, value) {
+        const tbody = $('systemTable');
+        const id = `sys-${label.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`;
+        let row = $(id);
+        if (!row) {
+          row = document.createElement('tr');
+          row.id = id;
+          const td1 = document.createElement('td');
+          td1.textContent = label;
+          const td2 = document.createElement('td');
+          td2.className = 'value mono';
+          td2.textContent = value ?? '-';
+          row.appendChild(td1);
+          row.appendChild(td2);
+          tbody.appendChild(row);
+        } else {
+          row.children[1].textContent = value ?? '-';
+        }
+      }
+
+      async function refreshSystem() {
+        const api = window.agathaSettings;
+        if (!api || typeof api.getSystemInfo !== 'function') return;
+        const info = await api.getSystemInfo();
+        if (!info) return;
+
+        upsertSystemRow('平台', info.platform);
+        upsertSystemRow('架构', info.arch);
+        upsertSystemRow('系统版本', info.osRelease);
+        upsertSystemRow('CPU', info.cpu);
+        upsertSystemRow('CPU 核心数', info.cpuCount != null ? String(info.cpuCount) : null);
+        upsertSystemRow('内存总量', info.totalMem);
+        upsertSystemRow('空闲内存', info.freeMem);
+        upsertSystemRow('应用版本', info.appVersion);
+        upsertSystemRow('Electron', info.versions?.electron);
+        upsertSystemRow('Chrome', info.versions?.chrome);
+        upsertSystemRow('Node', info.versions?.node);
+        upsertSystemRow('时区', info.timeZone);
+      }
+
+      function startClock() {
+        const tick = () => {
+          const now = new Date();
+          $('sys-clock').textContent = now.toLocaleString();
+        };
+        tick();
+        setInterval(tick, 1000);
+      }
+
+      $('tab-cache').addEventListener('click', () => setTab('cache'));
+      $('tab-system').addEventListener('click', () => setTab('system'));
+      $('refreshCache').addEventListener('click', refresh);
+      $('openCacheFolder').addEventListener('click', openCacheFolder);
+
+      startClock();
+      refresh();
+      refreshSystem();
+    </script>
+  </body>
+</html>
