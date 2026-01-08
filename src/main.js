@@ -109,54 +109,6 @@ function installContextMenu(win) {
   });
 }
 
-function showWindowMenu(win) {
-  const canMaximize = win.maximizable !== false;
-  const canMinimize = win.minimizable !== false;
-  const isMaximized = win.isMaximized();
-  const isMinimized = win.isMinimized();
-
-  const template = [
-    {
-      label: '更新',
-      click: async () => {
-        try {
-          await clearAllCaches(win.webContents.session, win.webContents);
-        } finally {
-          win.webContents.reload();
-        }
-      }
-    },
-    { type: 'separator' },
-    {
-      label: '还原',
-      enabled: isMaximized || isMinimized,
-      click: () => {
-        if (isMinimized) win.restore();
-        if (win.isMaximized()) win.unmaximize();
-      }
-    },
-    {
-      label: '最小化',
-      enabled: canMinimize && !isMinimized,
-      click: () => win.minimize()
-    },
-    {
-      label: '最大化',
-      enabled: canMaximize && !isMaximized,
-      click: () => win.maximize()
-    },
-    { type: 'separator' },
-    {
-      label: '关闭',
-      click: () => win.close()
-    }
-  ];
-
-  const menu = Menu.buildFromTemplate(template);
-  // Do not pass x/y; Electron will place it at cursor.
-  menu.popup({ window: win });
-}
-
 function installWindowControlsOverlay(win) {
   // Frameless windows need a draggable region and custom buttons.
   const DRAG_LEFT_PX = 450;
@@ -256,6 +208,17 @@ function installWindowControlsOverlay(win) {
         + '<path d="M2.4 2.4l5.2 5.2M7.6 2.4L2.4 7.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="square" fill="none" />'
         + '</svg>';
 
+      const svgGear = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+        + '<path fill="currentColor" d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.2 7.2 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 12.9 1h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.58.23-1.12.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L1.71 7.48a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L1.83 14.52a.5.5 0 0 0-.12.64l1.92 3.32c.13.22.39.31.6.22l2.39-.96c.5.4 1.05.71 1.63.94l.36 2.54c.04.24.25.42.49.42h3.8c.24 0 .45-.18.49-.42l.36-2.54c.58-.23 1.12-.54 1.63-.94l2.39.96c.22.09.47 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM11 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8Z" />'
+        + '</svg>';
+
+      const btnSettings = document.createElement('button');
+      btnSettings.type = 'button';
+      btnSettings.title = '设置';
+      btnSettings.className = '__agatha_settings';
+      btnSettings.innerHTML = svgGear;
+	  btnSettings.addEventListener('click', () => api.openSettings());
+
       const btnMin = document.createElement('button');
       btnMin.type = 'button';
       btnMin.title = '最小化';
@@ -277,14 +240,7 @@ function installWindowControlsOverlay(win) {
       btnClose.innerHTML = svgClose;
       btnClose.addEventListener('click', () => api.close());
 
-      // Bind window menu to right-click on these buttons.
-      for (const btn of [btnMin, btnMax, btnClose]) {
-        btn.addEventListener('contextmenu', (e) => {
-          e.preventDefault();
-          api.showMenu();
-        });
-      }
-
+      wrap.appendChild(btnSettings);
       wrap.appendChild(btnMin);
       wrap.appendChild(btnMax);
       wrap.appendChild(btnClose);
@@ -349,6 +305,66 @@ function createBrowserWindow({ url, isPopup = false } = {}) {
   }
 
   return win;
+}
+
+let settingsWindow = null;
+
+function createOrFocusSettingsWindow(parentWindow) {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.show();
+    settingsWindow.focus();
+    return settingsWindow;
+  }
+
+  settingsWindow = new BrowserWindow({
+    width: 520,
+    height: 520,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    show: false,
+    autoHideMenuBar: true,
+    parent: parentWindow || undefined,
+    modal: false,
+    // Use native frame to keep it simple.
+    frame: true,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      partition: PERSIST_PARTITION
+    }
+  });
+
+  settingsWindow.once('ready-to-show', () => settingsWindow.show());
+  settingsWindow.on('closed', () => {
+    settingsWindow = null;
+  });
+
+  const html = `<!doctype html>
+  <html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>设置</title>
+    <style>
+      html, body { height: 100%; margin: 0; }
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; padding: 16px; box-sizing: border-box; }
+      h1 { font-size: 16px; margin: 0 0 12px; }
+      .hint { font-size: 13px; opacity: 0.8; line-height: 1.4; }
+    </style>
+  </head>
+  <body>
+    <h1>设置</h1>
+    <div class="hint">这里是设置窗口（后续可以把具体设置项加在这里）。</div>
+  </body>
+  </html>`;
+
+  const dataUrl = `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+  settingsWindow.loadURL(dataUrl);
+
+  return settingsWindow;
 }
 
 function openInElectronWindow(url) {
@@ -419,7 +435,7 @@ app.whenReady().then(() => {
       if (win.isMaximized()) win.unmaximize();
       else win.maximize();
     } else if (action === 'close') win.close();
-    else if (action === 'showMenu') showWindowMenu(win);
+    else if (action === 'openSettings') createOrFocusSettingsWindow(win);
   });
 
   app.on('activate', () => {
