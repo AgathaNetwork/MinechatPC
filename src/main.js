@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, session } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, session } = require('electron');
 const path = require('path');
 
 const START_URL = 'https://front-dev.agatha.org.cn';
@@ -109,57 +109,208 @@ function installContextMenu(win) {
   });
 }
 
-function installSystemContextMenu(win) {
-  // Right-click on title bar / non-client area.
-  win.on('system-context-menu', (event) => {
-    event.preventDefault();
+function showWindowMenu(win) {
+  const canMaximize = win.maximizable !== false;
+  const canMinimize = win.minimizable !== false;
+  const isMaximized = win.isMaximized();
+  const isMinimized = win.isMinimized();
 
-    const canMaximize = win.maximizable !== false;
-    const canMinimize = win.minimizable !== false;
-    const isMaximized = win.isMaximized();
-    const isMinimized = win.isMinimized();
-
-    const template = [
-      {
-        label: '更新',
-        click: async () => {
-          try {
-            await clearAllCaches(win.webContents.session, win.webContents);
-          } finally {
-            win.webContents.reload();
-          }
+  const template = [
+    {
+      label: '更新',
+      click: async () => {
+        try {
+          await clearAllCaches(win.webContents.session, win.webContents);
+        } finally {
+          win.webContents.reload();
         }
-      },
-      { type: 'separator' },
-      {
-        label: '还原',
-        enabled: isMaximized || isMinimized,
-        click: () => {
-          if (isMinimized) win.restore();
-          if (win.isMaximized()) win.unmaximize();
-        }
-      },
-      {
-        label: '最小化',
-        enabled: canMinimize && !isMinimized,
-        click: () => win.minimize()
-      },
-      {
-        label: '最大化',
-        enabled: canMaximize && !isMaximized,
-        click: () => win.maximize()
-      },
-      { type: 'separator' },
-      {
-        label: '关闭',
-        click: () => win.close()
       }
-    ];
+    },
+    { type: 'separator' },
+    {
+      label: '还原',
+      enabled: isMaximized || isMinimized,
+      click: () => {
+        if (isMinimized) win.restore();
+        if (win.isMaximized()) win.unmaximize();
+      }
+    },
+    {
+      label: '最小化',
+      enabled: canMinimize && !isMinimized,
+      click: () => win.minimize()
+    },
+    {
+      label: '最大化',
+      enabled: canMaximize && !isMaximized,
+      click: () => win.maximize()
+    },
+    { type: 'separator' },
+    {
+      label: '关闭',
+      click: () => win.close()
+    }
+  ];
 
-    const menu = Menu.buildFromTemplate(template);
-    // Let Electron decide the position based on the cursor.
-    menu.popup({ window: win });
-  });
+  const menu = Menu.buildFromTemplate(template);
+  // Do not pass x/y; Electron will place it at cursor.
+  menu.popup({ window: win });
+}
+
+function installWindowControlsOverlay(win) {
+  // Frameless windows need a draggable region and custom buttons.
+  const DRAG_LEFT_PX = 450;
+  const TITLEBAR_HEIGHT_PX = 60;
+
+  const css = `
+    #__agatha_window_controls_bar {
+      position: fixed;
+      top: 0;
+      left: ${DRAG_LEFT_PX}px;
+      right: 0;
+      height: ${TITLEBAR_HEIGHT_PX}px;
+      z-index: 2147483647;
+      -webkit-app-region: drag;
+      background: transparent;
+    }
+    #__agatha_window_controls {
+      position: fixed;
+      top: 0;
+      right: 0;
+      height: ${TITLEBAR_HEIGHT_PX}px;
+      display: flex;
+      align-items: stretch;
+      z-index: 2147483647;
+      -webkit-app-region: no-drag;
+      user-select: none;
+    }
+    #__agatha_window_controls button {
+      width: 46px;
+      height: ${TITLEBAR_HEIGHT_PX}px;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      cursor: default;
+      padding: 0;
+      margin: 0;
+    }
+    #__agatha_window_controls button svg {
+      width: 14px;
+      height: 14px;
+      display: block;
+      margin: 0 auto;
+      opacity: 0.92;
+    }
+    #__agatha_window_controls button.__agatha_min svg {
+      width: 14px;
+      height: 14px;
+    }
+    #__agatha_window_controls button.__agatha_max svg {
+      width: 14px;
+      height: 14px;
+    }
+    #__agatha_window_controls button.__agatha_close svg {
+      width: 14px;
+      height: 14px;
+    }
+    #__agatha_window_controls button:hover {
+      background: rgba(255, 255, 255, 0.12);
+    }
+    #__agatha_window_controls button:active {
+      background: rgba(255, 255, 255, 0.18);
+    }
+    #__agatha_window_controls button.__agatha_close:hover {
+      background: rgba(232, 17, 35, 0.9);
+      color: #fff;
+    }
+    #__agatha_window_controls button.__agatha_close:active {
+      background: rgba(199, 0, 0, 0.9);
+      color: #fff;
+    }
+  `;
+
+  const js = `
+    (() => {
+      if (document.getElementById('__agatha_window_controls')) return;
+
+      const api = window.agathaWindowControls;
+      if (!api) return;
+
+      const bar = document.createElement('div');
+      bar.id = '__agatha_window_controls_bar';
+      document.documentElement.appendChild(bar);
+
+      const wrap = document.createElement('div');
+      wrap.id = '__agatha_window_controls';
+
+      const svgMin = '<svg viewBox="0 0 10 10" aria-hidden="true" focusable="false">'
+        + '<path d="M2 6.5h6" stroke="currentColor" stroke-width="1.4" stroke-linecap="square" fill="none" />'
+        + '</svg>';
+
+      const svgMax = '<svg viewBox="0 0 10 10" aria-hidden="true" focusable="false">'
+        + '<rect x="2.2" y="2.2" width="5.6" height="5.6" stroke="currentColor" stroke-width="1.2" fill="none" />'
+        + '</svg>';
+
+      const svgClose = '<svg viewBox="0 0 10 10" aria-hidden="true" focusable="false">'
+        + '<path d="M2.4 2.4l5.2 5.2M7.6 2.4L2.4 7.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="square" fill="none" />'
+        + '</svg>';
+
+      const btnMin = document.createElement('button');
+      btnMin.type = 'button';
+      btnMin.title = '最小化';
+      btnMin.className = '__agatha_min';
+      btnMin.innerHTML = svgMin;
+      btnMin.addEventListener('click', () => api.minimize());
+
+      const btnMax = document.createElement('button');
+      btnMax.type = 'button';
+      btnMax.title = '最大化/还原';
+      btnMax.className = '__agatha_max';
+      btnMax.innerHTML = svgMax;
+      btnMax.addEventListener('click', () => api.toggleMaximize());
+
+      const btnClose = document.createElement('button');
+      btnClose.type = 'button';
+      btnClose.title = '关闭';
+      btnClose.className = '__agatha_close';
+      btnClose.innerHTML = svgClose;
+      btnClose.addEventListener('click', () => api.close());
+
+      // Bind window menu to right-click on these buttons.
+      for (const btn of [btnMin, btnMax, btnClose]) {
+        btn.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          api.showMenu();
+        });
+      }
+
+      wrap.appendChild(btnMin);
+      wrap.appendChild(btnMax);
+      wrap.appendChild(btnClose);
+
+      document.documentElement.appendChild(wrap);
+    })();
+  `;
+
+  const inject = async () => {
+    try {
+      // Only inject controls on the main app host to avoid interfering with
+      // third-party auth pages (which may have different layouts).
+      const currentUrl = win.webContents.getURL();
+      const hostname = currentUrl ? new URL(currentUrl).hostname : '';
+      if (hostname !== APP_HOSTNAME) return;
+
+      await win.webContents.insertCSS(css);
+      await win.webContents.executeJavaScript(js, true);
+    } catch {
+      // ignore
+    }
+  };
+
+  win.webContents.on('dom-ready', inject);
+  win.webContents.on('did-navigate', inject);
+  win.webContents.on('did-navigate-in-page', inject);
 }
 
 function createBrowserWindow({ url, isPopup = false } = {}) {
@@ -171,6 +322,7 @@ function createBrowserWindow({ url, isPopup = false } = {}) {
     show: false,
     autoHideMenuBar: true,
     icon: iconPath,
+    frame: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -186,7 +338,11 @@ function createBrowserWindow({ url, isPopup = false } = {}) {
   win.once('ready-to-show', () => win.show());
   win.setMenuBarVisibility(false);
   installContextMenu(win);
-  installSystemContextMenu(win);
+  installWindowControlsOverlay(win);
+
+  if (!isPopup) {
+    win.setMinimumSize(800, 600);
+  }
 
   if (url) {
     win.loadURL(url);
@@ -252,6 +408,19 @@ app.whenReady().then(() => {
   installPermanentCacheHeaders(persistentSession);
 
   createMainWindow();
+
+  // IPC: window controls from the injected overlay (not cookies).
+  ipcMain.on('agatha-window-control', (event, action) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return;
+
+    if (action === 'minimize') win.minimize();
+    else if (action === 'toggleMaximize') {
+      if (win.isMaximized()) win.unmaximize();
+      else win.maximize();
+    } else if (action === 'close') win.close();
+    else if (action === 'showMenu') showWindowMenu(win);
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
