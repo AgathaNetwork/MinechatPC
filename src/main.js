@@ -163,11 +163,14 @@ function installSystemContextMenu(win) {
 }
 
 function createBrowserWindow({ url, isPopup = false } = {}) {
+  const iconPath = path.join(__dirname, '..', 'assets', 'icon.ico');
+
   const win = new BrowserWindow({
     width: isPopup ? 520 : 1200,
     height: isPopup ? 720 : 800,
     show: false,
     autoHideMenuBar: true,
+    icon: iconPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

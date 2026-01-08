@@ -17,6 +17,12 @@
 
 产物会输出到 `dist/`。
 
+## 应用图标（Windows）
+
+- 把你提供的图片保存为 `assets/icon.png`
+- 执行 `npm install`（会自动生成 `assets/icon.ico`）
+- 重新运行 `npm start` 或 `npm run dist`
+
 ## 说明
 
 - 默认只允许应用内导航到 `front-dev.agatha.org.cn`；跳转到其它域名会在系统默认浏览器中打开。

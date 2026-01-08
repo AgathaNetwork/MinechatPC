@@ -6,12 +6,15 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
+    "gen:icon": "node scripts/generate-icons.cjs",
+    "postinstall": "node scripts/generate-icons.cjs",
     "pack": "electron-builder --dir",
     "dist": "electron-builder"
   },
   "devDependencies": {
     "electron": "^29.0.0",
-    "electron-builder": "^24.13.3"
+    "electron-builder": "^24.13.3",
+    "png-to-ico": "^2.1.8"
   },
   "build": {
     "appId": "org.agatha.frontdev",
@@ -21,9 +24,12 @@
     },
     "files": [
       "src/**/*",
+      "assets/**/*",
+      "scripts/**/*",
       "package.json"
     ],
     "win": {
+      "icon": "assets/icon.ico",
       "target": [
         "nsis"
       ]
