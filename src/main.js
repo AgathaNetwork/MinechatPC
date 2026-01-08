@@ -1,8 +1,9 @@
-const { app, BrowserWindow, Menu } = require('electron');
+const { app, BrowserWindow, Menu, session } = require('electron');
 const path = require('path');
 
 const START_URL = 'https://front-dev.agatha.org.cn';
 const PERSIST_PARTITION = 'persist:agatha-front';
+const APP_HOSTNAME = 'front-dev.agatha.org.cn';
 
 const EXACT_ALLOWED_HOSTS = new Set([
   'front-dev.agatha.org.cn',
@@ -37,6 +38,130 @@ function isAllowedUrl(urlString) {
   }
 }
 
+function shouldForcePermanentCache(urlString) {
+  try {
+    const url = new URL(urlString);
+    if (url.hostname !== APP_HOSTNAME) return false;
+
+    const pathname = url.pathname.toLowerCase();
+    return (
+      pathname.endsWith('.html') ||
+      pathname.endsWith('.jpg') ||
+      pathname.endsWith('.jpeg') ||
+      pathname.endsWith('.png') ||
+      pathname.endsWith('.bmp') ||
+      pathname.endsWith('.js')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function installPermanentCacheHeaders(sess) {
+  if (sess.__agathaPermanentCacheInstalled) return;
+  sess.__agathaPermanentCacheInstalled = true;
+
+  // Force long-lived cache for specific static resource types.
+  // Note: This does not affect cookies; it only changes response caching headers.
+  sess.webRequest.onHeadersReceived({ urls: [`https://${APP_HOSTNAME}/*`] }, (details, callback) => {
+    if (!shouldForcePermanentCache(details.url)) {
+      callback({ responseHeaders: details.responseHeaders });
+      return;
+    }
+
+    const headers = { ...(details.responseHeaders || {}) };
+
+    delete headers['cache-control'];
+    delete headers['Cache-Control'];
+    delete headers['pragma'];
+    delete headers['Pragma'];
+    delete headers['expires'];
+    delete headers['Expires'];
+
+    // "Permanent" in practice: very long max-age + immutable.
+    const tenYearsSeconds = 60 * 60 * 24 * 365 * 10;
+    headers['Cache-Control'] = [`public, max-age=${tenYearsSeconds}, immutable`];
+
+    const expiresAt = new Date(Date.now() + tenYearsSeconds * 1000).toUTCString();
+    headers['Expires'] = [expiresAt];
+
+    callback({ responseHeaders: headers });
+  });
+}
+
+async function clearAllCaches(sess, webContents) {
+  // Clear HTTP cache + SW/CacheStorage/shader caches; do NOT clear cookies.
+  await sess.clearCache();
+  await sess.clearStorageData({
+    storages: ['appcache', 'cachestorage', 'serviceworkers', 'shadercache']
+  });
+
+  // Chromium code cache (JS bytecode cache). Not cookies.
+  if (webContents && typeof webContents.clearCodeCaches === 'function') {
+    await webContents.clearCodeCaches();
+  }
+}
+
+function installContextMenu(win) {
+  // Disable web page context menu entirely.
+  win.webContents.on('context-menu', (event) => {
+    event.preventDefault();
+  });
+}
+
+function installSystemContextMenu(win) {
+  // Right-click on title bar / non-client area.
+  win.on('system-context-menu', (event) => {
+    event.preventDefault();
+
+    const canMaximize = win.maximizable !== false;
+    const canMinimize = win.minimizable !== false;
+    const isMaximized = win.isMaximized();
+    const isMinimized = win.isMinimized();
+
+    const template = [
+      {
+        label: '更新',
+        click: async () => {
+          try {
+            await clearAllCaches(win.webContents.session, win.webContents);
+          } finally {
+            win.webContents.reload();
+          }
+        }
+      },
+      { type: 'separator' },
+      {
+        label: '还原',
+        enabled: isMaximized || isMinimized,
+        click: () => {
+          if (isMinimized) win.restore();
+          if (win.isMaximized()) win.unmaximize();
+        }
+      },
+      {
+        label: '最小化',
+        enabled: canMinimize && !isMinimized,
+        click: () => win.minimize()
+      },
+      {
+        label: '最大化',
+        enabled: canMaximize && !isMaximized,
+        click: () => win.maximize()
+      },
+      { type: 'separator' },
+      {
+        label: '关闭',
+        click: () => win.close()
+      }
+    ];
+
+    const menu = Menu.buildFromTemplate(template);
+    // Let Electron decide the position based on the cursor.
+    menu.popup({ window: win });
+  });
+}
+
 function createBrowserWindow({ url, isPopup = false } = {}) {
   const win = new BrowserWindow({
     width: isPopup ? 520 : 1200,
@@ -57,6 +182,8 @@ function createBrowserWindow({ url, isPopup = false } = {}) {
 
   win.once('ready-to-show', () => win.show());
   win.setMenuBarVisibility(false);
+  installContextMenu(win);
+  installSystemContextMenu(win);
 
   if (url) {
     win.loadURL(url);
@@ -116,6 +243,11 @@ function createMainWindow() {
 }
 
 app.whenReady().then(() => {
+  // Install caching policy on the persistent session.
+  // Attaching once ensures it applies to main window + popups.
+  const persistentSession = session.fromPartition(PERSIST_PARTITION);
+  installPermanentCacheHeaders(persistentSession);
+
   createMainWindow();
 
   app.on('activate', () => {
