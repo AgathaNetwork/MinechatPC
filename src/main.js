@@ -3,6 +3,9 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
+// Force a consistent display name (tray tooltip, etc.).
+app.setName('Minechat');
+
 const START_URL = 'https://front-dev.agatha.org.cn';
 const PERSIST_PARTITION = 'persist:agatha-front';
 const APP_HOSTNAME = 'front-dev.agatha.org.cn';
@@ -258,7 +261,14 @@ function installWindowControlsOverlay(win) {
       const currentUrl = win.webContents.getURL();
       const parsedUrl = currentUrl ? new URL(currentUrl) : null;
       const hostname = parsedUrl ? parsedUrl.hostname : '';
-      if (hostname !== APP_HOSTNAME) return;
+      if (hostname !== APP_HOSTNAME) {
+        // When navigating away (e.g. Microsoft login), any previously inserted
+        // CSS may be dropped by Chromium. Clear keys so returning to the app
+        // host re-injects styles even if the path is the same.
+        win.__agathaWindowControlsCssDocKey = null;
+        win.__agathaWindowControlsCssKey = null;
+        return;
+      }
 
       const pathname = (parsedUrl?.pathname || '').toLowerCase();
       const dragLeftPx = pathname === '/' || pathname === '/index.html' ? 0 : DEFAULT_DRAG_LEFT_PX;
@@ -355,7 +365,7 @@ function createTray() {
 
   const iconPath = path.join(__dirname, '..', 'assets', 'icon.ico');
   tray = new Tray(iconPath);
-  tray.setToolTip(app.getName());
+  tray.setToolTip('Minechat');
 
   const menu = Menu.buildFromTemplate([
     {
