@@ -111,14 +111,14 @@ function installContextMenu(win) {
 
 function installWindowControlsOverlay(win) {
   // Frameless windows need a draggable region and custom buttons.
-  const DRAG_LEFT_PX = 450;
+  const DEFAULT_DRAG_LEFT_PX = 450;
   const TITLEBAR_HEIGHT_PX = 60;
 
   const css = `
     #__agatha_window_controls_bar {
       position: fixed;
       top: 0;
-      left: ${DRAG_LEFT_PX}px;
+      left: ${DEFAULT_DRAG_LEFT_PX}px;
       right: 0;
       height: ${TITLEBAR_HEIGHT_PX}px;
       z-index: 2147483647;
@@ -254,11 +254,36 @@ function installWindowControlsOverlay(win) {
       // Only inject controls on the main app host to avoid interfering with
       // third-party auth pages (which may have different layouts).
       const currentUrl = win.webContents.getURL();
-      const hostname = currentUrl ? new URL(currentUrl).hostname : '';
+      const parsedUrl = currentUrl ? new URL(currentUrl) : null;
+      const hostname = parsedUrl ? parsedUrl.hostname : '';
       if (hostname !== APP_HOSTNAME) return;
 
-      await win.webContents.insertCSS(css);
+      const pathname = (parsedUrl?.pathname || '').toLowerCase();
+      const dragLeftPx = pathname === '/' || pathname === '/index.html' ? 0 : DEFAULT_DRAG_LEFT_PX;
+
+      // `insertCSS` is not guaranteed to persist across full navigations.
+      // Re-inject once per document URL to keep the controls styled.
+      const docKey = `${parsedUrl.origin}${parsedUrl.pathname}`;
+      if (win.__agathaWindowControlsCssDocKey !== docKey) {
+        if (win.__agathaWindowControlsCssKey && typeof win.webContents.removeInsertedCSS === 'function') {
+          try {
+            await win.webContents.removeInsertedCSS(win.__agathaWindowControlsCssKey);
+          } catch {
+            // ignore
+          }
+        }
+
+        win.__agathaWindowControlsCssKey = await win.webContents.insertCSS(css);
+        win.__agathaWindowControlsCssDocKey = docKey;
+      }
+
       await win.webContents.executeJavaScript(js, true);
+
+      // Update draggable area left offset without reinjecting CSS.
+      await win.webContents.executeJavaScript(
+        `(() => { const el = document.getElementById('__agatha_window_controls_bar'); if (el) el.style.left = '${dragLeftPx}px'; })();`,
+        true
+      );
     } catch {
       // ignore
     }
