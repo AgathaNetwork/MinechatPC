@@ -535,6 +535,23 @@ function getSystemInfo() {
   };
 }
 
+function getBuildInfo() {
+  try {
+    const p = path.join(__dirname, 'build-info.json');
+    const raw = fs.readFileSync(p, 'utf8');
+    const obj = JSON.parse(raw);
+    if (!obj || typeof obj !== 'object') return null;
+    const buildTimeIso = typeof obj.buildTimeIso === 'string' ? obj.buildTimeIso : '';
+    const buildTimeMs = typeof obj.buildTimeMs === 'number' ? obj.buildTimeMs : 0;
+    return {
+      buildTimeIso: buildTimeIso || null,
+      buildTimeMs: buildTimeMs > 0 ? buildTimeMs : null
+    };
+  } catch {
+    return null;
+  }
+}
+
 function createOrFocusSettingsWindow(parentWindow) {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     settingsWindow.show();
@@ -656,6 +673,15 @@ app.whenReady().then(() => {
 
   ipcMain.handle('agatha-settings:get-system-info', async () => {
     return getSystemInfo();
+  });
+
+  ipcMain.handle('agatha-settings:get-app-info', async () => {
+    const build = getBuildInfo();
+    return {
+      appVersion: app.getVersion(),
+      buildTimeIso: build?.buildTimeIso || null,
+      buildTimeMs: build?.buildTimeMs || null
+    };
   });
 
   // IPC: window controls from the injected overlay (not cookies).

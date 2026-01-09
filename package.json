@@ -6,6 +6,8 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
+    "prepack": "node scripts/generate-build-info.cjs",
+    "predist": "node scripts/generate-build-info.cjs",
     "gen:icon": "node scripts/generate-icons.cjs",
     "postinstall": "node scripts/generate-icons.cjs",
     "pack": "electron-builder --dir",

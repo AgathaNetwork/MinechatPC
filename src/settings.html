@@ -51,6 +51,7 @@
     <div class="tabs" role="tablist" aria-label="设置">
       <button class="tab" id="tab-cache" type="button" role="tab" aria-selected="true" aria-controls="panel-cache">缓存</button>
       <button class="tab" id="tab-system" type="button" role="tab" aria-selected="false" aria-controls="panel-system">系统</button>
+      <button class="tab" id="tab-about" type="button" role="tab" aria-selected="false" aria-controls="panel-about">关于</button>
     </div>
 
     <div class="divider" role="separator" aria-hidden="true"></div>
@@ -87,6 +88,22 @@
         </thead>
         <tbody id="systemTable">
           <tr><td>系统时钟</td><td class="value mono" id="sys-clock">-</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel" id="panel-about" role="tabpanel" aria-labelledby="tab-about">
+      <div class="label">关于</div>
+      <table aria-label="关于">
+        <thead>
+          <tr>
+            <th>项目</th>
+            <th class="value">值</th>
+          </tr>
+        </thead>
+        <tbody id="aboutTable">
+          <tr><td>版本号</td><td class="value mono" id="about-version">-</td></tr>
+          <tr><td>编译时间</td><td class="value mono" id="about-build-time">-</td></tr>
         </tbody>
       </table>
     </section>
@@ -157,10 +174,16 @@
 
       function setTab(active) {
         const isCache = active === 'cache';
+        const isSystem = active === 'system';
+        const isAbout = active === 'about';
+
         $('tab-cache').setAttribute('aria-selected', String(isCache));
-        $('tab-system').setAttribute('aria-selected', String(!isCache));
+        $('tab-system').setAttribute('aria-selected', String(isSystem));
+        $('tab-about').setAttribute('aria-selected', String(isAbout));
+
         $('panel-cache').classList.toggle('__open', isCache);
-        $('panel-system').classList.toggle('__open', !isCache);
+        $('panel-system').classList.toggle('__open', isSystem);
+        $('panel-about').classList.toggle('__open', isAbout);
       }
 
       function upsertSystemRow(label, value) {
@@ -203,6 +226,32 @@
         upsertSystemRow('时区', info.timeZone);
       }
 
+      function formatDateTime(value) {
+        try {
+          const d = value instanceof Date ? value : new Date(value);
+          if (Number.isNaN(d.getTime())) return '-';
+          return d.toLocaleString();
+        } catch {
+          return '-';
+        }
+      }
+
+      async function refreshAbout() {
+        const api = window.agathaSettings;
+        if (!api || typeof api.getAppInfo !== 'function') return;
+        const info = await api.getAppInfo();
+        $('about-version').textContent = info?.appVersion || '-';
+
+        const t = info?.buildTimeIso || (info?.buildTimeMs ? new Date(info.buildTimeMs).toISOString() : null);
+        if (!t) {
+          $('about-build-time').textContent = '-';
+          return;
+        }
+        // show local time plus ISO for debugging
+        const local = formatDateTime(t);
+        $('about-build-time').textContent = local && local !== '-' ? `${local} (${t})` : String(t);
+      }
+
       function startClock() {
         const tick = () => {
           const now = new Date();
@@ -214,12 +263,14 @@
 
       $('tab-cache').addEventListener('click', () => setTab('cache'));
       $('tab-system').addEventListener('click', () => setTab('system'));
+      $('tab-about').addEventListener('click', () => setTab('about'));
       $('refreshCache').addEventListener('click', refresh);
       $('openCacheFolder').addEventListener('click', openCacheFolder);
 
       startClock();
       refresh();
       refreshSystem();
+      refreshAbout();
     </script>
   </body>
 </html>
