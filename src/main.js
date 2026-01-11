@@ -1,10 +1,15 @@
 const { app, BrowserWindow, Menu, ipcMain, session, shell, Tray } = require('electron');
+const { startNotifyListener } = require('./notify');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
 // Force a consistent display name (tray tooltip, etc.).
 app.setName('Minechat');
+// 启动通知监听
+app.whenReady().then(() => {
+  startNotifyListener();
+});
 
 const START_URL = 'https://front-dev.agatha.org.cn';
 const PERSIST_PARTITION = 'persist:agatha-front';

@@ -18,6 +18,10 @@
     "electron-builder": "^24.13.3",
     "png-to-ico": "^2.1.8"
   },
+  "dependencies": {
+    "ws": "^8.0.0",
+    "node-notifier": "^10.0.1"
+  },
   "build": {
     "appId": "org.agatha.frontdev",
     "productName": "Minechat",
