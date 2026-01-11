@@ -1,22 +1,32 @@
 // notify.js
 // 连接/notify WebSocket并系统通知
-const { Notification } = require('electron');
+const { app, BrowserWindow, Notification } = require('electron');
 const notifier = require('node-notifier');
 const util = require('util');
+const fs = require('fs');
+const path = require('path');
 let socket = null;
 let reconnectTimer = null;
 
-function getToken() {
-  // 假设token存储在本地文件或localStorage，需根据实际情况实现
+async function getToken() {
+  // 优先从应用数据目录的 token.txt 读取（如果存在），否则尝试从渲染进程的 localStorage 获取
   try {
     const data = fs.readFileSync(path.join(app.getPath('userData'), 'token.txt'), 'utf8');
-    return data.trim();
-  } catch {
-    return '';
-  }
+    if (data && data.trim()) return data.trim();
+  } catch (e) {}
+
+  try {
+    const win = BrowserWindow.getAllWindows()[0];
+    if (win && win.webContents) {
+      const token = await win.webContents.executeJavaScript("localStorage.getItem('token')");
+      return (token || '').trim();
+    }
+  } catch (e) {}
+
+  return '';
 }
 
-function connectNotifySocket(onNotify) {
+async function connectNotifySocket(onNotify) {
   if (socket) {
     try {
       require('fs').appendFileSync(require('path').join(process.cwd(), 'notify-debug.log'), '[notify] socket disconnect\n');
@@ -25,54 +35,76 @@ function connectNotifySocket(onNotify) {
     socket.close();
     socket = null;
   }
-  // 这里假设API服务和前端在同一主机
-  const token = getToken();
-  // 自动获取electron窗口当前url的host，适配反代场景
-  let wsHost = 'localhost:4000';
-  try {
-    const { BrowserWindow } = require('electron');
-    const win = BrowserWindow.getAllWindows()[0];
-    if (win) {
-      const url = win.webContents.getURL();
-      const m = url.match(/^https?:\/\/(.*?)(\/|$)/);
-      if (m && m[1]) wsHost = m[1];
-    }
-  } catch (e) {}
-  const wsUrl = `ws://${wsHost}/api/notify?token=${encodeURIComponent(token)}`;
-  try {
-    require('fs').appendFileSync(require('path').join(process.cwd(), 'notify-debug.log'), `[notify] socket create: ${wsUrl}\n`);
-  } catch (e) {}
-  console.log(`[notify] socket create: ${wsUrl}`);
-  socket = new (require('ws'))(wsUrl);
+  // 清理上一次的重试定时器（如果有）
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
 
-  socket.on('open', () => {
+  // 这里假设API服务和前端在同一主机
+  const token = await getToken();
+  // 固定后端 host，避免自动检测失败
+  const wsBase = 'https://front-dev.agatha.org.cn';
+  try {
+    require('fs').appendFileSync(require('path').join(process.cwd(), 'notify-debug.log'), `[notify] socket create: ${wsBase} path=/api/notify auth.token=${token ? 'yes' : 'no'}\n`);
+  } catch (e) {}
+  console.log(`[notify] socket create: ${wsBase} path=/api/notify`);
+
+  const io = require('socket.io-client');
+  try {
+    socket = io(wsBase, {
+      path: '/api/notify',
+      transports: ['websocket'],
+      auth: { token },
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      secure: true,
+    });
+  } catch (e) {
+    try { require('fs').appendFileSync(require('path').join(process.cwd(), 'notify-debug.log'), `[notify] socket create error: ${e?.message || e}\n`); } catch (err) {}
+    console.error('[notify] socket create error', e);
+    return;
+  }
+
+  socket.on('connect', () => {
     reconnectTimer && clearTimeout(reconnectTimer);
     try {
-      require('fs').appendFileSync(require('path').join(process.cwd(), 'notify-debug.log'), '[notify] socket open\n');
+      require('fs').appendFileSync(require('path').join(process.cwd(), 'notify-debug.log'), '[notify] socket connect\n');
     } catch (e) {}
-    console.log('[notify] socket open');
+    console.log('[notify] socket connect');
   });
-  socket.on('close', () => {
+
+  socket.on('disconnect', (reason) => {
     try {
-      require('fs').appendFileSync(require('path').join(process.cwd(), 'notify-debug.log'), '[notify] socket close\n');
+      require('fs').appendFileSync(require('path').join(process.cwd(), 'notify-debug.log'), `[notify] socket disconnect: ${reason}\n`);
     } catch (e) {}
-    console.log('[notify] socket close');
-    reconnectTimer = setTimeout(() => connectNotifySocket(onNotify), 5000);
+    console.log('[notify] socket disconnect', reason);
+    // 使用 socket.io-client 内建重连，这里不再手动重连
   });
-  socket.on('error', (err) => {
+
+  socket.on('connect_error', (err) => {
     try {
-      require('fs').appendFileSync(require('path').join(process.cwd(), 'notify-debug.log'), `[notify] socket error: ${err?.message || err}\n`);
+      require('fs').appendFileSync(require('path').join(process.cwd(), 'notify-debug.log'), `[notify] socket connect_error: ${err?.message || err}\n`);
     } catch (e) {}
-    console.log('[notify] socket error', err);
-    socket.close();
-  });
-  socket.on('message', (data) => {
-    try {
-      const msg = JSON.parse(data);
-      if (msg.event === 'notify.message' && typeof onNotify === 'function') {
-        onNotify(msg.payload);
+    console.log('[notify] socket connect_error', err);
+    // 如果连接未建立，启用回退重试：关闭当前 socket 并在 5s 后重建
+    if (!socket || !socket.connected) {
+      try { socket && socket.close(); } catch (e) {}
+      socket = null;
+      if (!reconnectTimer) {
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          try { connectNotifySocket(onNotify); } catch (e) { console.error('[notify] reconnect error', e); }
+        }, 5000);
       }
-    } catch {}
+    }
+  });
+
+  // 监听后端通知事件
+  socket.on('notify.message', (payload) => {
+    try { if (typeof onNotify === 'function') onNotify(payload); } catch (e) {}
   });
 }
 

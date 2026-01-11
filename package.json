@@ -20,7 +20,8 @@
   },
   "dependencies": {
     "ws": "^8.0.0",
-    "node-notifier": "^10.0.1"
+    "node-notifier": "^10.0.1",
+    "socket.io-client": "^4.7.2"
   },
   "build": {
     "appId": "org.agatha.frontdev",
