@@ -128,17 +128,43 @@ function startNotifyListener() {
       // 会话名称优先：payload.chatName || payload.chat?.name，回退显示 chatId
       const title = payload.chatName || (payload.chat && payload.chat.name) || `会话 ${payload.chatId}`;
 
-      // 应用图标（相对于项目根的 assets 文件夹）
-      let iconPath = path.join(process.cwd(), 'assets', 'icon.ico');
-      if (!fs.existsSync(iconPath)) iconPath = undefined;
+      // 如果有活跃的 Electron 窗口（未销毁且可见），优先使用 Windows 原生窗口提醒（闪烁任务栏）;
+      // 否则显示系统通知。使用 Electron `Notification` 优先，回退到 `node-notifier`。
+      function showSystemNotification(title, body) {
+        try {
+          let iconPath = path.join(process.cwd(), 'assets', 'icon.ico');
+          if (!fs.existsSync(iconPath)) iconPath = undefined;
+          if (Notification && typeof Notification === 'function') {
+            try {
+              const n = new Notification({ title, body: body || '', icon: iconPath });
+              n.show();
+              return;
+            } catch (e) {
+              // fallthrough to node-notifier
+            }
+          }
+          // fallback
+          try { notifier.notify({ title, message: body || '你有新消息', appID: 'Minechat', icon: iconPath }); } catch (e) {}
+        } catch (e) {}
+      }
 
-      // 使用node-notifier调用Windows原生通知
-      notifier.notify({
-        title,
-        message: messageText || '你有新消息',
-        appID: 'Minechat',
-        icon: iconPath
-      });
+      const win = BrowserWindow.getAllWindows().find(w => w && !w.isDestroyed());
+      if (win && typeof win.isVisible === 'function' && win.isVisible()) {
+        try {
+          // 如果窗口已有焦点，则不需要提醒
+          const focused = (typeof win.isFocused === 'function') ? win.isFocused() : false;
+          if (!focused) {
+            // flashFrame 在 Windows 上会持续闪烁任务栏图标，直到窗口获得焦点或程序手动停止
+            try { win.flashFrame(true); } catch (e) { throw e; }
+          }
+        } catch (e) {
+          // flash failed -> show system notification
+          showSystemNotification(title, messageText);
+        }
+      } else {
+        // no visible window -> show system notification
+        showSystemNotification(title, messageText);
+      }
     }
   });
 }

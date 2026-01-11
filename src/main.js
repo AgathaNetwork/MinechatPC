@@ -6,6 +6,10 @@ const os = require('os');
 
 // Force a consistent display name (tray tooltip, etc.).
 app.setName('Minechat');
+// Ensure Windows notifications show app name by setting AppUserModelID
+try {
+  if (typeof app.setAppUserModelId === 'function') app.setAppUserModelId('Minechat');
+} catch (e) {}
 // 启动通知监听
 app.whenReady().then(() => {
   startNotifyListener();
