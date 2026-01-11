@@ -117,14 +117,27 @@ function startNotifyListener() {
     } catch (e) {}
     console.log(logStr);
     if (payload && payload.message) {
-      const title = payload.message.content?.text || '你有新消息';
-      const message = `来自会话 ${payload.chatId}`;
+      // 提取消息内容文本
+      const msg = payload.message || {};
+      const content = msg.content;
+      let messageText = '';
+      if (typeof content === 'string') messageText = content;
+      else if (content && typeof content === 'object') messageText = content.text || content.body || JSON.stringify(content);
+      else messageText = '';
+
+      // 会话名称优先：payload.chatName || payload.chat?.name，回退显示 chatId
+      const title = payload.chatName || (payload.chat && payload.chat.name) || `会话 ${payload.chatId}`;
+
+      // 应用图标（相对于项目根的 assets 文件夹）
+      let iconPath = path.join(process.cwd(), 'assets', 'icon.ico');
+      if (!fs.existsSync(iconPath)) iconPath = undefined;
+
       // 使用node-notifier调用Windows原生通知
       notifier.notify({
         title,
-        message,
+        message: messageText || '你有新消息',
         appID: 'Minechat',
-        icon: undefined // 可自定义图标
+        icon: iconPath
       });
     }
   });
