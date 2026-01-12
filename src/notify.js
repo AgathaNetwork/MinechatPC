@@ -176,6 +176,23 @@ function startNotifyListener() {
 
       // 如果有活跃的 Electron 窗口（未销毁且可见），优先使用 Windows 原生窗口提醒（闪烁任务栏）;
       // 否则显示系统通知。使用 Electron `Notification` 优先，回退到 `node-notifier`。
+      function focusMainWindow() {
+        try {
+          const wins = BrowserWindow.getAllWindows().filter(w => w && !w.isDestroyed());
+          const win = wins.length > 0 ? wins[0] : null;
+          if (win) {
+            try {
+              if (typeof win.isMinimized === 'function' && win.isMinimized()) win.restore();
+            } catch (e) {}
+            try { win.show(); } catch (e) {}
+            try { win.focus(); } catch (e) {}
+            return;
+          }
+          // 如果没有窗口，尝试让应用获得焦点（在 macOS 上可能会触发 activate 事件）
+          try { app.focus && app.focus(); } catch (e) {}
+        } catch (e) {}
+      }
+
       function showSystemNotification(title, body) {
         try {
           let iconPath = path.join(process.cwd(), 'assets', 'icon.ico');
@@ -183,14 +200,19 @@ function startNotifyListener() {
           if (Notification && typeof Notification === 'function') {
             try {
               const n = new Notification({ title, body: body || '', icon: iconPath });
+              try { n.on('click', () => { focusMainWindow(); }); } catch (e) {}
               n.show();
               return;
             } catch (e) {
               // fallthrough to node-notifier
             }
           }
-          // fallback
-          try { notifier.notify({ title, message: body || '你有新消息', appID: 'Minechat', icon: iconPath }); } catch (e) {}
+          // fallback to node-notifier: use per-call callback (wait:true) to catch clicks
+          try {
+            notifier.notify({ title, message: body || '你有新消息', appID: 'Minechat', icon: iconPath, wait: true }, (err, response, metadata) => {
+              try { focusMainWindow(); } catch (e) {}
+            });
+          } catch (e) {}
         } catch (e) {}
       }
 
