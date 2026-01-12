@@ -117,13 +117,59 @@ function startNotifyListener() {
     } catch (e) {}
     console.log(logStr);
     if (payload && payload.message) {
-      // 提取消息内容文本
+      // 格式化消息预览：仅对文本消息显示全文内容，其他类型显示友好占位
       const msg = payload.message || {};
-      const content = msg.content;
-      let messageText = '';
-      if (typeof content === 'string') messageText = content;
-      else if (content && typeof content === 'object') messageText = content.text || content.body || JSON.stringify(content);
-      else messageText = '';
+      function messagePreview(m) {
+        try {
+          if (!m) return '';
+          const content = m.content;
+          const t = String(m.type || (content && content.type) || '').toLowerCase();
+
+          if (t === 'text' || t === '') {
+            if (typeof content === 'string') return content;
+            if (typeof content === 'number' || typeof content === 'boolean') return String(content);
+            if (content && typeof content === 'object') {
+              const v = content.text ?? content.body ?? content;
+              if (typeof v === 'string') return v;
+              if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+              return '';
+            }
+            return '';
+          }
+
+          if (t === 'emoji' || t === 'sticker') return '[表情]';
+
+          if (t === 'file' || t === 'attachment') {
+            if (content && typeof content === 'object' && content.filename) return `[文件] ${String(content.filename)}`;
+            return '[文件]';
+          }
+
+          if (t === 'image' || (content && content.mimetype && /^image\//i.test(String(content.mimetype)))) return '[图片]';
+
+          if (t === 'video') return '[视频]';
+
+          if (t === 'coordinate') {
+            if (content && typeof content === 'object' && content.name) return `[坐标] ${String(content.name)}`;
+            return '[坐标]';
+          }
+
+          if (t === 'player_card' || t === 'playercard') return '[玩家名片]';
+
+          // fallback: try to show any readable text-like field, otherwise a generic label
+          if (typeof content === 'string') return content;
+          if (typeof content === 'number' || typeof content === 'boolean') return String(content);
+          if (content && typeof content === 'object') {
+            const v = content.text ?? content.body ?? content.filename ?? '';
+            if (typeof v === 'string') return v;
+            if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+          }
+          return '[非文本消息]';
+        } catch (e) {
+          return '';
+        }
+      }
+
+      const messageText = messagePreview(msg);
 
       // 会话名称优先：payload.chatName || payload.chat?.name，回退显示 chatId
       const title = payload.chatName || (payload.chat && payload.chat.name) || `会话 ${payload.chatId}`;
