@@ -490,6 +490,51 @@ async function getCacheInfoForPersistentSession() {
   };
 }
 
+function pickFolderBytes(cacheInfo, folderName) {
+  try {
+    const list = cacheInfo && Array.isArray(cacheInfo.diskCacheFolders) ? cacheInfo.diskCacheFolders : [];
+    const hit = list.find((x) => x && x.name === folderName);
+    const bytes = hit && typeof hit.bytes === 'number' ? hit.bytes : null;
+    return formatBytes(bytes);
+  } catch {
+    return null;
+  }
+}
+
+async function getOfflineCacheInfoForPersistentSession() {
+  // Offline cache is primarily stored in CacheStorage, with SW scripts in Service Worker.
+  const cacheInfo = await getCacheInfoForPersistentSession();
+  const cacheStorageBytes = pickFolderBytes(cacheInfo, 'CacheStorage');
+  const serviceWorkerBytes = pickFolderBytes(cacheInfo, 'Service Worker');
+  const total =
+    (typeof cacheStorageBytes === 'number' ? cacheStorageBytes : 0) +
+    (typeof serviceWorkerBytes === 'number' ? serviceWorkerBytes : 0);
+
+  return {
+    cacheStorageBytes,
+    serviceWorkerBytes,
+    offlineTotalBytes: formatBytes(total)
+  };
+}
+
+async function clearOfflineCacheForPersistentSession() {
+  const sess = session.fromPartition(PERSIST_PARTITION);
+
+  // Clear SW + CacheStorage only (do not clear cookies).
+  await sess.clearStorageData({
+    storages: ['cachestorage', 'serviceworkers']
+  });
+
+  // Best-effort: also clear HTTP cache metadata. This does not clear cookies.
+  try {
+    await sess.clearCache();
+  } catch {
+    // ignore
+  }
+
+  return { ok: true };
+}
+
 function getPersistentSessionStoragePath() {
   try {
     const sess = session.fromPartition(PERSIST_PARTITION);
@@ -671,6 +716,14 @@ app.whenReady().then(() => {
 
   ipcMain.handle('agatha-settings:get-cache-info', async () => {
     return getCacheInfoForPersistentSession();
+  });
+
+  ipcMain.handle('agatha-settings:get-offline-cache-info', async () => {
+    return getOfflineCacheInfoForPersistentSession();
+  });
+
+  ipcMain.handle('agatha-settings:clear-offline-cache', async () => {
+    return clearOfflineCacheForPersistentSession();
   });
 
   ipcMain.handle('agatha-settings:open-cache-folder', async () => {

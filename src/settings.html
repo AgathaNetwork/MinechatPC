@@ -59,6 +59,7 @@
     <section class="panel __open" id="panel-cache" role="tabpanel" aria-labelledby="tab-cache">
       <div class="toolbar">
         <button id="refreshCache" type="button">刷新缓存大小</button>
+        <button id="clearOfflineCache" type="button">清理离线缓存</button>
         <button id="openCacheFolder" type="button">打开缓存文件夹</button>
       </div>
 
@@ -72,6 +73,9 @@
         </thead>
         <tbody id="cacheTable">
           <tr><td>HTTP 缓存</td><td class="value" id="cell-http">-</td></tr>
+          <tr><td>离线缓存（CacheStorage）</td><td class="value" id="cell-offline-cache">-</td></tr>
+          <tr><td>Service Worker</td><td class="value" id="cell-offline-sw">-</td></tr>
+          <tr><td>离线缓存合计</td><td class="value" id="cell-offline-total">-</td></tr>
           <tr><td>磁盘缓存总计</td><td class="value" id="cell-disk-total">-</td></tr>
         </tbody>
       </table>
@@ -127,10 +131,29 @@
       async function refresh() {
         try {
           $('refreshCache').disabled = true;
+          $('clearOfflineCache').disabled = true;
           const api = window.agathaSettings;
           if (!api || typeof api.getCacheInfo !== 'function') {
             $('cell-http').textContent = '不可用';
             return;
+          }
+
+          // Offline cache (CacheStorage / Service Worker)
+          try {
+            if (typeof api.getOfflineCacheInfo === 'function') {
+              const offline = await api.getOfflineCacheInfo();
+              $('cell-offline-cache').textContent = formatBytes(offline?.cacheStorageBytes);
+              $('cell-offline-sw').textContent = formatBytes(offline?.serviceWorkerBytes);
+              $('cell-offline-total').textContent = formatBytes(offline?.offlineTotalBytes);
+            } else {
+              $('cell-offline-cache').textContent = '-';
+              $('cell-offline-sw').textContent = '-';
+              $('cell-offline-total').textContent = '-';
+            }
+          } catch (e) {
+            $('cell-offline-cache').textContent = '读取失败';
+            $('cell-offline-sw').textContent = '读取失败';
+            $('cell-offline-total').textContent = '读取失败';
           }
 
           const info = await api.getCacheInfo();
@@ -158,6 +181,22 @@
           $('cell-http').textContent = '读取失败';
         } finally {
           $('refreshCache').disabled = false;
+          $('clearOfflineCache').disabled = false;
+        }
+      }
+
+      async function clearOfflineCache() {
+        const api = window.agathaSettings;
+        if (!api || typeof api.clearOfflineCache !== 'function') return;
+        try {
+          $('clearOfflineCache').disabled = true;
+          $('refreshCache').disabled = true;
+          await api.clearOfflineCache();
+        } finally {
+          $('clearOfflineCache').disabled = false;
+          $('refreshCache').disabled = false;
+          // refresh UI after clear
+          refresh();
         }
       }
 
@@ -265,6 +304,7 @@
       $('tab-system').addEventListener('click', () => setTab('system'));
       $('tab-about').addEventListener('click', () => setTab('about'));
       $('refreshCache').addEventListener('click', refresh);
+      $('clearOfflineCache').addEventListener('click', clearOfflineCache);
       $('openCacheFolder').addEventListener('click', openCacheFolder);
 
       startClock();
