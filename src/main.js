@@ -168,6 +168,19 @@ function installWindowControlsOverlay(win) {
       margin: 0 auto;
       opacity: 0.92;
     }
+    #__agatha_window_controls button.__agatha_pin {
+      width: 54px;
+    }
+    #__agatha_window_controls button.__agatha_pin svg {
+      width: 13px;
+      height: 13px;
+      transition: transform 120ms ease;
+      transform-origin: 50% 50%;
+      transform: translateY(-1px) rotate(45deg);
+    }
+    #__agatha_window_controls button.__agatha_pin:not(.__pinned) svg {
+        transform: translateY(-1px) rotate(0deg);
+    }
     #__agatha_window_controls button.__agatha_min svg {
       width: 14px;
       height: 14px;
@@ -198,10 +211,23 @@ function installWindowControlsOverlay(win) {
 
   const js = `
     (() => {
-      if (document.getElementById('__agatha_window_controls')) return;
-
       const api = window.agathaWindowControls;
       if (!api) return;
+
+      const existingWrap = document.getElementById('__agatha_window_controls');
+      if (existingWrap) {
+        const btn = existingWrap.querySelector('button.__agatha_pin');
+        if (btn && typeof api.getAlwaysOnTop === 'function') {
+          Promise.resolve(api.getAlwaysOnTop())
+            .then((res) => {
+              const pinned = !!(res && res.alwaysOnTop);
+              btn.classList.toggle('__pinned', pinned);
+              btn.title = pinned ? '取消置顶' : '图钉（置顶）';
+            })
+            .catch(() => {});
+        }
+        return;
+      }
 
       const bar = document.createElement('div');
       bar.id = '__agatha_window_controls_bar';
@@ -225,6 +251,32 @@ function installWindowControlsOverlay(win) {
       const svgGear = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
         + '<path fill="currentColor" d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.2 7.2 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 12.9 1h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.58.23-1.12.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L1.71 7.48a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L1.83 14.52a.5.5 0 0 0-.12.64l1.92 3.32c.13.22.39.31.6.22l2.39-.96c.5.4 1.05.71 1.63.94l.36 2.54c.04.24.25.42.49.42h3.8c.24 0 .45-.18.49-.42l.36-2.54c.58-.23 1.12-.54 1.63-.94l2.39.96c.22.09.47 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM11 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8Z" />'
         + '</svg>';
+
+      const svgPin = '<svg version="1.0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 1241" preserveAspectRatio="xMidYMid meet" aria-hidden="true" focusable="false">'
+        + '<g transform="translate(0,1241) scale(0.1,-0.1)" fill="currentColor" stroke="none">'
+        + '<path d="M4844 12400 c-466 -59 -1070 -356 -1769 -869 -1108 -813 -2221 -2052 -2748 -3061 -239 -456 -353 -872 -317 -1151 28 -215 127 -372 285 -456 29 -15 51 -32 49 -38 -2 -6 72 -30 178 -59 331 -89 552 -169 816 -297 1102 -532 1953 -1554 2546 -3057 310 -787 557 -1761 686 -2712 l21 -155 67 -63 c412 -388 1060 -472 1872 -243 41 12 86 24 100 27 13 3 29 9 36 15 6 5 14 6 17 2 4 -3 7 -1 7 5 0 6 6 9 14 6 8 -3 17 0 21 5 3 6 11 9 16 6 5 -4 9 -2 9 4 0 6 7 8 15 5 8 -4 15 -1 15 5 0 6 7 8 17 4 11 -4 14 -3 9 5 -5 8 -2 10 8 6 9 -3 16 -1 16 5 0 6 7 8 15 5 8 -4 15 -1 15 5 0 6 7 8 17 4 11 -5 14 -3 8 6 -6 10 -2 11 15 6 15 -5 20 -4 16 4 -5 7 -1 9 8 5 9 -3 16 -1 16 6 0 6 4 9 9 6 12 -8 42 4 36 14 -6 9 25 23 33 15 3 -3 -1 -5 -8 -5 -7 0 -11 -2 -8 -5 8 -8 128 46 123 55 -6 9 25 23 33 15 3 -3 -1 -5 -8 -5 -7 0 -11 -3 -7 -6 6 -7 417 191 417 200 0 4 -72 -30 -161 -75 -89 -44 -163 -79 -165 -77 -2 2 76 43 172 91 97 48 173 83 169 77 -9 -15 50 15 220 113 531 304 1134 738 1655 1190 174 151 390 350 386 355 -3 2 -74 -58 -158 -135 -580 -527 -1174 -975 -1760 -1326 -170 -102 -339 -197 -327 -184 3 4 76 47 163 97 635 363 1281 843 1930 1433 78 70 144 127 147 127 5 0 1693 -1782 2034 -2146 l40 -43 372 352 c204 194 373 355 375 358 2 4 -465 502 -1036 1107 -572 605 -1041 1107 -1042 1116 -1 8 5 21 14 28 15 12 16 11 3 -4 -7 -10 -11 -18 -9 -18 5 0 88 94 228 260 35 41 53 66 39 55 -14 -11 -5 0 20 24 26 24 37 38 26 31 -11 -7 0 7 25 30 25 23 36 37 25 30 -11 -7 -2 4 20 24 22 20 37 36 33 36 -3 0 8 15 24 33 48 50 394 515 515 692 574 834 925 1613 1030 2285 26 164 26 555 0 690 -60 314 -168 538 -373 775 l-42 48 -278 -16 c-553 -32 -967 -30 -1399 8 -1252 111 -2291 474 -3110 1089 -694 520 -1212 1218 -1520 2046 -70 188 -105 301 -180 578 -45 169 -74 259 -81 252 -6 -6 -21 14 -43 55 -62 121 -190 216 -345 257 -82 21 -253 30 -352 18z m5966 -9033 c0 -2 -12 -14 -27 -28 l-28 -24 24 28 c23 25 31 32 31 24z m-60 -70 c0 -2 -17 -19 -37 -38 l-38 -34 34 38 c33 34 41 42 41 34z m-70 -80 c0 -2 -19 -21 -42 -42 l-43 -40 40 43 c36 39 45 47 45 39z" />'
+        + '</g>'
+        + '</svg>';
+
+      const setPinnedUi = (btn, pinned) => {
+        btn.classList.toggle('__pinned', !!pinned);
+        btn.title = pinned ? '取消置顶' : '图钉（置顶）';
+      };
+
+      const btnPin = document.createElement('button');
+      btnPin.type = 'button';
+      btnPin.title = '图钉（置顶）';
+      btnPin.className = '__agatha_pin';
+      btnPin.innerHTML = svgPin;
+      btnPin.addEventListener('click', async () => {
+        if (!api || typeof api.toggleAlwaysOnTop !== 'function') return;
+        try {
+          const res = await api.toggleAlwaysOnTop();
+          setPinnedUi(btnPin, !!(res && res.alwaysOnTop));
+        } catch {
+          // ignore
+        }
+      });
 
       const btnSettings = document.createElement('button');
       btnSettings.type = 'button';
@@ -254,10 +306,17 @@ function installWindowControlsOverlay(win) {
       btnClose.innerHTML = svgClose;
       btnClose.addEventListener('click', () => api.close());
 
+      wrap.appendChild(btnPin);
       wrap.appendChild(btnSettings);
       wrap.appendChild(btnMin);
       wrap.appendChild(btnMax);
       wrap.appendChild(btnClose);
+
+      if (typeof api.getAlwaysOnTop === 'function') {
+        Promise.resolve(api.getAlwaysOnTop())
+          .then((res) => setPinnedUi(btnPin, !!(res && res.alwaysOnTop)))
+          .catch(() => {});
+      }
 
       document.documentElement.appendChild(wrap);
     })();
@@ -757,6 +816,30 @@ app.whenReady().then(() => {
       else win.maximize();
     } else if (action === 'close') win.close();
     else if (action === 'openSettings') createOrFocusSettingsWindow(win);
+  });
+
+  ipcMain.handle('agatha-window-always-on-top', async (event, action) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return { alwaysOnTop: false };
+
+    const current = typeof win.isAlwaysOnTop === 'function' ? win.isAlwaysOnTop() : false;
+    if (action === 'toggle') {
+      const next = !current;
+      try {
+        // Keep it simple: enable/disable always-on-top.
+        win.setAlwaysOnTop(next);
+        if (next) {
+          win.show();
+          win.focus();
+        }
+      } catch {
+        // ignore
+      }
+      return { alwaysOnTop: typeof win.isAlwaysOnTop === 'function' ? win.isAlwaysOnTop() : next };
+    }
+
+    // action === 'get'
+    return { alwaysOnTop: current };
   });
 
   app.on('activate', () => {
