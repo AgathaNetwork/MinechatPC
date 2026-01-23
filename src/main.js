@@ -83,7 +83,7 @@ async function handleImportedImagePath(filePath) {
   pendingImportFilePath = normalized;
 
   // Bring app to front.
-  try { showMainWindow(); } catch {}
+  try { raiseWindowToFront(mainWindow); } catch {}
 
   // Navigate to gallery page and open upload dialog.
   const galleryUrl = new URL('/gallery.html', START_URL).toString();
@@ -610,6 +610,54 @@ let tray = null;
 let mainWindow = null;
 let isQuitting = false;
 let pendingShowMainWindow = false;
+
+function raiseWindowToFront(win) {
+  if (!win || win.isDestroyed()) return;
+
+  let previousAlwaysOnTop = false;
+  try {
+    previousAlwaysOnTop = typeof win.isAlwaysOnTop === 'function' ? win.isAlwaysOnTop() : false;
+  } catch {
+    previousAlwaysOnTop = false;
+  }
+
+  try {
+    if (typeof win.isMinimized === 'function' && win.isMinimized()) win.restore();
+  } catch {}
+
+  try {
+    win.show();
+  } catch {}
+
+  // On Windows, focus alone is often insufficient due to OS focus-stealing
+  // prevention. Temporarily setting always-on-top is a reliable workaround.
+  try {
+    win.setAlwaysOnTop(true, 'screen-saver');
+  } catch {
+    try { win.setAlwaysOnTop(true); } catch {}
+  }
+
+  try {
+    if (typeof win.moveTop === 'function') win.moveTop();
+  } catch {}
+
+  try {
+    win.focus();
+  } catch {}
+
+  try {
+    if (typeof app.focus === 'function') app.focus({ steal: true });
+  } catch {}
+
+  // Restore user's original always-on-top preference.
+  setTimeout(() => {
+    try {
+      win.setAlwaysOnTop(previousAlwaysOnTop);
+    } catch {
+      // ignore
+    }
+  }, 1500);
+}
 
 function showMainWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
