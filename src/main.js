@@ -10,10 +10,13 @@ app.setName('Minechat');
 try {
   if (typeof app.setAppUserModelId === 'function') app.setAppUserModelId('Minechat');
 } catch (e) {}
-// 启动通知监听
-app.whenReady().then(() => {
-  startNotifyListener();
-});
+
+// Prevent multiple instances.
+// If the app is already running (even in tray), block launching another one.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  try { app.quit(); } catch (e) {}
+}
 
 const START_URL = 'https://front-dev.agatha.org.cn';
 const PERSIST_PARTITION = 'persist:agatha-front';
@@ -415,9 +418,13 @@ function createBrowserWindow({ url, isPopup = false } = {}) {
 let tray = null;
 let mainWindow = null;
 let isQuitting = false;
+let pendingShowMainWindow = false;
 
 function showMainWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    if (typeof mainWindow.isMinimized === 'function' && mainWindow.isMinimized()) mainWindow.restore();
+  } catch (e) {}
   mainWindow.show();
   mainWindow.focus();
 }
@@ -765,6 +772,12 @@ function createMainWindow() {
 }
 
 app.whenReady().then(() => {
+  // Only the primary instance should continue initialization.
+  if (!gotSingleInstanceLock) return;
+
+  // 启动通知监听（仅主实例）
+  try { startNotifyListener(); } catch (e) {}
+
   // Install caching policy on the persistent session.
   // Attaching once ensures it applies to main window + popups.
   const persistentSession = session.fromPartition(PERSIST_PARTITION);
@@ -772,6 +785,11 @@ app.whenReady().then(() => {
 
   mainWindow = createMainWindow();
   createTray();
+
+  if (pendingShowMainWindow) {
+    pendingShowMainWindow = false;
+    showMainWindow();
+  }
 
   ipcMain.handle('agatha-settings:get-cache-info', async () => {
     return getCacheInfoForPersistentSession();
@@ -849,6 +867,17 @@ app.whenReady().then(() => {
     showMainWindow();
   });
 });
+
+if (gotSingleInstanceLock) {
+  app.on('second-instance', () => {
+    // Someone tried to run a second instance: focus existing.
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      showMainWindow();
+    } else {
+      pendingShowMainWindow = true;
+    }
+  });
+}
 
 app.on('window-all-closed', () => {
   // Do not quit when all windows are closed; the app lives in the tray.
