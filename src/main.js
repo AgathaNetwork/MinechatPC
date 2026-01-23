@@ -1,5 +1,6 @@
 const { app, BrowserWindow, Menu, ipcMain, session, shell, Tray } = require('electron');
 const { startNotifyListener } = require('./notify');
+const { startModImageImportListener, DEFAULT_HOST: MOD_IMPORT_DEFAULT_HOST, DEFAULT_PORT: MOD_IMPORT_DEFAULT_PORT } = require('./modImageImportListener');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -21,6 +22,196 @@ if (!gotSingleInstanceLock) {
 const START_URL = 'https://front-dev.agatha.org.cn';
 const PERSIST_PARTITION = 'persist:agatha-front';
 const APP_HOSTNAME = 'front-dev.agatha.org.cn';
+
+// Local listener for Minecraft mod -> MinechatPC.
+// Allow overriding via env for debugging.
+const MOD_IMPORT_HOST = process.env.MINECHAT_MOD_IMPORT_HOST || MOD_IMPORT_DEFAULT_HOST;
+const MOD_IMPORT_PORT = Number.parseInt(process.env.MINECHAT_MOD_IMPORT_PORT || '', 10) || MOD_IMPORT_DEFAULT_PORT;
+
+let modImportListener = null;
+const modImportQueue = [];
+let modImportProcessing = false;
+let pendingImportFilePath = null;
+
+function installSelectFileAutofill() {
+  // Intentionally kept as a no-op for now.
+  // The previous implementation attempt called this during startup; leaving it
+  // defined prevents main-process crashes that would hide the window.
+}
+
+function enqueueImport(filePath) {
+  const p = String(filePath || '').trim();
+  if (!p) return;
+  modImportQueue.push(p);
+  // Fire-and-forget; internal try/catch prevents startup impact.
+  flushImportQueue();
+}
+
+async function flushImportQueue() {
+  if (modImportProcessing) return;
+  modImportProcessing = true;
+  try {
+    while (modImportQueue.length > 0) {
+      const next = modImportQueue.shift();
+      try {
+        await handleImportedImagePath(next);
+      } catch {
+        // ignore
+      }
+    }
+  } finally {
+    modImportProcessing = false;
+  }
+}
+
+async function handleImportedImagePath(filePath) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    pendingImportFilePath = filePath;
+    return;
+  }
+
+  const normalized = String(filePath || '').trim();
+  if (!normalized) return;
+
+  try {
+    const st = fs.statSync(normalized);
+    if (!st.isFile()) return;
+  } catch {
+    return;
+  }
+
+  pendingImportFilePath = normalized;
+
+  // Bring app to front.
+  try { showMainWindow(); } catch {}
+
+  // Navigate to gallery page and open upload dialog.
+  const galleryUrl = new URL('/gallery.html', START_URL).toString();
+  const wc = mainWindow.webContents;
+  const current = wc.getURL();
+  if (current !== galleryUrl) {
+    try {
+      await wc.loadURL(galleryUrl);
+    } catch {
+      // If navigation fails, keep pending path for later retry.
+      return;
+    }
+  }
+
+  await tryOpenGalleryUploadDialog(wc);
+  await trySetGalleryUploadFile(wc, pendingImportFilePath);
+}
+
+async function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForPredicate(wc, predicateJs, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const ok = await wc.executeJavaScript(`(function(){ try { return !!(${predicateJs}); } catch { return false; } })()`);
+      if (ok) return true;
+    } catch {
+      // ignore
+    }
+    await delay(150);
+  }
+  return false;
+}
+
+async function tryOpenGalleryUploadDialog(wc) {
+  // Click the primary "上传" button to open the upload dialog.
+  try {
+    await wc.executeJavaScript(`(function(){
+      const buttons = Array.from(document.querySelectorAll('button'));
+      const target = buttons.find(b => (b.innerText || '').includes('上传'));
+      if (target) target.click();
+      return !!target;
+    })()`);
+  } catch {
+    // ignore
+  }
+
+  // Wait until dialog appears.
+  await waitForPredicate(
+    wc,
+    `document.querySelector('.mc-upload-dialog') && getComputedStyle(document.querySelector('.mc-upload-dialog')).display !== 'none'`,
+    5000
+  );
+}
+
+async function trySetGalleryUploadFile(wc, filePath) {
+  const p = String(filePath || '').trim();
+  if (!p) return false;
+
+  // Wait for the file input to be present (Element Plus upload creates a hidden input[type=file]).
+  const ready = await waitForPredicate(
+    wc,
+    `document.querySelector('.mc-upload-dialog input[type="file"]') || document.querySelector('input[type="file"]')`,
+    5000
+  );
+  if (!ready) return false;
+
+  // Use Chrome DevTools Protocol to set the file input value.
+  // This avoids relying on any Vue internals or global functions.
+  const selectorCandidates = [
+    '.mc-upload-dialog input[type="file"]',
+    '.el-dialog input[type="file"]',
+    'input[type="file"]'
+  ];
+
+  for (const selector of selectorCandidates) {
+    const ok = await setFileInputFilesViaCdp(wc, selector, [p]);
+    if (ok) return true;
+  }
+  return false;
+}
+
+async function setFileInputFilesViaCdp(wc, selector, filePaths) {
+  if (!wc || wc.isDestroyed()) return false;
+
+  let didAttach = false;
+  try {
+    if (!wc.debugger.isAttached()) {
+      wc.debugger.attach('1.3');
+      didAttach = true;
+    }
+  } catch {
+    return false;
+  }
+
+  try {
+    const doc = await wc.debugger.sendCommand('DOM.getDocument', { depth: 1 });
+    const rootNodeId = doc && doc.root && doc.root.nodeId ? doc.root.nodeId : null;
+    if (!rootNodeId) return false;
+
+    const q = await wc.debugger.sendCommand('DOM.querySelector', { nodeId: rootNodeId, selector });
+    const nodeId = q && q.nodeId ? q.nodeId : null;
+    if (!nodeId) return false;
+
+    await wc.debugger.sendCommand('DOM.setFileInputFiles', { nodeId, files: filePaths });
+
+    try {
+      await wc.executeJavaScript(`(function(){
+        const el = document.querySelector(${JSON.stringify(selector)});
+        if (!el) return false;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      })()`);
+    } catch {
+      // ignore
+    }
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (didAttach) {
+      try { wc.debugger.detach(); } catch {}
+    }
+  }
+}
 
 const EXACT_ALLOWED_HOSTS = new Set([
   'front-dev.agatha.org.cn',
@@ -783,12 +974,37 @@ app.whenReady().then(() => {
   const persistentSession = session.fromPartition(PERSIST_PARTITION);
   installPermanentCacheHeaders(persistentSession);
 
+  // Install file chooser autofill for "mod -> Minechat" image import.
+  installSelectFileAutofill(persistentSession);
+
   mainWindow = createMainWindow();
   createTray();
+
+  // Start local listener for Minecraft mod to send image file paths.
+  // The mod can call:
+  //   POST http://127.0.0.1:28188/pc/gallery/import  body: {"path":"C:\\path\\to\\image.png"}
+  // or:
+  //   GET  http://127.0.0.1:28188/pc/gallery/import?path=C%3A%5Cpath%5Cto%5Cimage.png
+  try {
+    modImportListener = startModImageImportListener({
+      host: MOD_IMPORT_HOST,
+      port: MOD_IMPORT_PORT,
+      onImport: enqueueImport
+    });
+  } catch (e) {
+    modImportListener = null;
+  }
 
   if (pendingShowMainWindow) {
     pendingShowMainWindow = false;
     showMainWindow();
+  }
+
+  // If a mod sent a path before UI was ready, process it now.
+  try {
+    flushImportQueue();
+  } catch {
+    // ignore
   }
 
   ipcMain.handle('agatha-settings:get-cache-info', async () => {
@@ -886,4 +1102,11 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  try {
+    if (modImportListener && typeof modImportListener.close === 'function') {
+      modImportListener.close();
+    }
+  } catch {
+    // ignore
+  }
 });

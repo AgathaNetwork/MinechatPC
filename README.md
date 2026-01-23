@@ -26,4 +26,13 @@
 ## 说明
 
 - 默认只允许应用内导航到 `front-dev.agatha.org.cn`；跳转到其它域名会在系统默认浏览器中打开。
-- `preload.js` 目前不暴露任何 API，保持最小权限。
+
+## PC 端相册导入（模组 -> Minechat）
+
+PC 端会在本机启动一个 HTTP 监听，用于接收“图片已保存到电脑后的路径”，并自动跳转到相册页打开上传弹窗、预选该文件。
+
+- 监听地址：`http://127.0.0.1:28188/pc/gallery/import`
+- `GET` 示例：`/pc/gallery/import?path=C%3A%5Cimages%5Cshot.png`
+- `POST` 示例：请求体 `{"path":"C:\\images\\shot.png"}`（也支持直接传纯文本路径）
+
+注意：相册上传当前优先支持 PNG；建议模组保存为 `.png`。
