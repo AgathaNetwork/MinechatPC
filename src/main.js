@@ -297,6 +297,128 @@ function installPermanentCacheHeaders(sess) {
   });
 }
 
+function getCookieUrlForRemoval(cookie) {
+  try {
+    const domain = String(cookie?.domain || '').replace(/^\./, '');
+    const pathPart = String(cookie?.path || '/') || '/';
+    const scheme = cookie?.secure ? 'https://' : 'http://';
+    return `${scheme}${domain}${pathPart}`;
+  } catch {
+    return null;
+  }
+}
+
+async function clearSessionForLogout(sess, webContents) {
+  if (!sess) return;
+
+  // Clear cookies (best-effort) – some Electron/Chromium builds can be picky.
+  try {
+    const cookies = await sess.cookies.get({});
+    await Promise.allSettled(
+      (cookies || []).map(async (c) => {
+        try {
+          const url = getCookieUrlForRemoval(c);
+          if (!url) return;
+          await sess.cookies.remove(url, c.name);
+        } catch {
+          // ignore
+        }
+      })
+    );
+  } catch {
+    // ignore
+  }
+
+  // Clear storages including service worker / CacheStorage / localStorage.
+  // Include cookies too as a stronger fallback.
+  try {
+    await sess.clearStorageData({
+      storages: ['appcache', 'cachestorage', 'cookies', 'filesystem', 'indexdb', 'localstorage', 'serviceworkers', 'shadercache'],
+      quotas: ['temporary', 'persistent', 'syncable']
+    });
+  } catch {
+    try {
+      await sess.clearStorageData();
+    } catch {
+      // ignore
+    }
+  }
+
+  // Clear HTTP cache and (if supported) compiled code cache.
+  try {
+    await sess.clearCache();
+  } catch {
+    // ignore
+  }
+
+  try {
+    if (webContents && typeof webContents.clearCodeCaches === 'function') {
+      await webContents.clearCodeCaches();
+    }
+  } catch {
+    // ignore
+  }
+}
+
+async function performNativeLogout(targetWindow) {
+  const win = targetWindow && !targetWindow.isDestroyed() ? targetWindow : mainWindow;
+  if (!win || win.isDestroyed()) return { ok: false, error: 'window_unavailable' };
+
+  const sess = win.webContents?.session;
+  try {
+    await clearSessionForLogout(sess, win.webContents);
+  } catch {
+    // ignore
+  }
+
+  // Load the login page (index) with a cache-busting query.
+  const u = new URL('/', START_URL);
+  u.searchParams.set('logout', '1');
+  u.searchParams.set('ts', String(Date.now()));
+
+  try {
+    await win.webContents.loadURL(u.toString());
+  } catch {
+    // ignore
+  }
+
+  try { raiseWindowToFront(win); } catch {}
+
+  return { ok: true };
+}
+
+function installLogoutAutoClear(sess) {
+  if (!sess || sess.__agathaLogoutAutoClearInstalled) return;
+  sess.__agathaLogoutAutoClearInstalled = true;
+
+  // Fallback: if the web app does manage to call /auth/logout, also clear the
+  // persistent session locally so the next page load can't auto-login.
+  const filter = { urls: ['*://*/auth/logout*'] };
+
+  const trigger = async () => {
+    try {
+      await performNativeLogout(mainWindow);
+    } catch {
+      // ignore
+    }
+  };
+
+  try {
+    sess.webRequest.onCompleted(filter, (details) => {
+      try {
+        const method = String(details?.method || '').toUpperCase();
+        if (method && method !== 'POST') return;
+      } catch {
+        // ignore
+      }
+      trigger();
+    });
+    sess.webRequest.onErrorOccurred(filter, () => trigger());
+  } catch {
+    // ignore
+  }
+}
+
 async function clearAllCaches(sess, webContents) {
   // Clear HTTP cache + SW/CacheStorage/shader caches; do NOT clear cookies.
   await sess.clearCache();
@@ -513,6 +635,44 @@ function installWindowControlsOverlay(win) {
       }
 
       document.documentElement.appendChild(wrap);
+
+      // Intercept "登出" clicks in the embedded web app.
+      // The web app triggers logout then navigates to '/', but in Electron the
+      // logout request can be cancelled by navigation; we do a native logout
+      // to guarantee cookies/storage are cleared.
+      try {
+        if (!window.__agathaLogoutClickInterceptorInstalled) {
+          window.__agathaLogoutClickInterceptorInstalled = true;
+          document.addEventListener('click', (ev) => {
+            try {
+              const t = ev.target;
+              const el = t && typeof t.closest === 'function' ? t.closest('button,a') : null;
+              if (!el) return;
+              const text = String(el.innerText || '').replace(/\s+/g, ' ').trim();
+              if (!text) return;
+
+              const isLogout =
+                text === '登出' ||
+                text.includes('登出') ||
+                text.includes('退出登录') ||
+                text.includes('注销') ||
+                /\blog\s*out\b/i.test(text) ||
+                /\blogout\b/i.test(text);
+              if (!isLogout) return;
+
+              if (api && typeof api.logout === 'function') {
+                ev.preventDefault();
+                ev.stopPropagation();
+                try { api.logout(); } catch (e) {}
+              }
+            } catch (e) {
+              // ignore
+            }
+          }, true);
+        }
+      } catch (e) {
+        // ignore
+      }
     })();
   `;
 
@@ -1022,6 +1182,9 @@ app.whenReady().then(() => {
   const persistentSession = session.fromPartition(PERSIST_PARTITION);
   installPermanentCacheHeaders(persistentSession);
 
+  // Ensure logout truly logs out in the persistent session.
+  installLogoutAutoClear(persistentSession);
+
   // Install file chooser autofill for "mod -> Minechat" image import.
   installSelectFileAutofill(persistentSession);
 
@@ -1098,6 +1261,16 @@ app.whenReady().then(() => {
       else win.maximize();
     } else if (action === 'close') win.close();
     else if (action === 'openSettings') createOrFocusSettingsWindow(win);
+  });
+
+  // IPC: native logout from injected click interceptor.
+  ipcMain.handle('agatha-session:logout', async (event) => {
+    try {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      return await performNativeLogout(win);
+    } catch {
+      return { ok: false, error: 'logout_failed' };
+    }
   });
 
   ipcMain.handle('agatha-window-always-on-top', async (event, action) => {
