@@ -1,4 +1,7 @@
 const http = require('http');
+const https = require('https');
+const net = require('net');
+const tls = require('tls');
 const fs = require('fs');
 const path = require('path');
 
@@ -36,6 +39,102 @@ function startLocalWebServer({ publicDir, host = '127.0.0.1', port = 0, getConfi
     try {
       const url = new URL(req.url || '/', `http://${host}`);
       const pathname = safeDecodeURIComponent(url.pathname || '/');
+
+      // Simple CORS preflight compatibility (some browsers still send it even on same-origin).
+      if ((req.method || '').toUpperCase() === 'OPTIONS') {
+        res.statusCode = 204;
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', String(req.headers['access-control-request-headers'] || '*'));
+        res.setHeader('Access-Control-Max-Age', '600');
+        res.end();
+        return;
+      }
+
+      // Reverse proxy: /api/* -> <apiBase>/*
+      // This avoids CORS issues when the UI is served from http://127.0.0.1:<port>.
+      if (pathname === '/api' || pathname.startsWith('/api/')) {
+        const conf = typeof getConfig === 'function' ? getConfig() : {};
+        const apiBase = conf && conf.apiBase ? String(conf.apiBase) : '';
+        if (!apiBase) {
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify({ error: 'apiBase_not_configured' }));
+          return;
+        }
+
+        const targetBase = apiBase.endsWith('/') ? apiBase.slice(0, -1) : apiBase;
+        const stripPrefix = pathname === '/api' ? '' : pathname.slice('/api'.length);
+        const targetUrl = new URL(stripPrefix + (url.search || ''), targetBase + '/');
+
+        const isHttps = targetUrl.protocol === 'https:';
+        const client = isHttps ? https : http;
+
+        const headers = { ...(req.headers || {}) };
+        // Hop-by-hop headers should not be forwarded.
+        delete headers['connection'];
+        delete headers['proxy-connection'];
+        delete headers['keep-alive'];
+        delete headers['transfer-encoding'];
+        delete headers['upgrade'];
+
+        // Update Host/Origin/Referer for backend.
+        headers['host'] = targetUrl.host;
+        try {
+          if (headers['origin']) headers['origin'] = targetUrl.origin;
+        } catch {}
+        try {
+          if (headers['referer']) {
+            const r = new URL(String(headers['referer']));
+            headers['referer'] = targetUrl.origin + r.pathname + (r.search || '');
+          }
+        } catch {}
+
+        const proxyReq = client.request(
+          {
+            protocol: targetUrl.protocol,
+            hostname: targetUrl.hostname,
+            port: targetUrl.port || (isHttps ? 443 : 80),
+            method: req.method,
+            path: targetUrl.pathname + targetUrl.search,
+            headers
+          },
+          (proxyRes) => {
+            res.statusCode = proxyRes.statusCode || 502;
+
+            // Copy headers back, but keep it safe.
+            const respHeaders = { ...(proxyRes.headers || {}) };
+            delete respHeaders['content-security-policy'];
+            delete respHeaders['content-security-policy-report-only'];
+            // Ensure browser treats this as local response.
+            respHeaders['access-control-allow-origin'] = '*';
+            Object.entries(respHeaders).forEach(([k, v]) => {
+              try {
+                if (typeof v !== 'undefined') res.setHeader(k, v);
+              } catch {
+                // ignore invalid header
+              }
+            });
+
+            proxyRes.pipe(res);
+          }
+        );
+
+        proxyReq.on('error', () => {
+          if (!res.headersSent) {
+            res.statusCode = 502;
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          }
+          try {
+            res.end(JSON.stringify({ error: 'proxy_error' }));
+          } catch {
+            // ignore
+          }
+        });
+
+        req.pipe(proxyReq);
+        return;
+      }
 
       if (pathname === '/config') {
         const conf = typeof getConfig === 'function' ? getConfig() : {};
@@ -90,6 +189,82 @@ function startLocalWebServer({ publicDir, host = '127.0.0.1', port = 0, getConfi
       res.statusCode = 500;
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
       res.end('Internal Server Error');
+    }
+  });
+
+  // WebSocket upgrade proxy for /api/* (socket.io uses it for websocket transport).
+  server.on('upgrade', (req, socket, head) => {
+    try {
+      const url = new URL(req.url || '/', `http://${host}`);
+      const pathname = safeDecodeURIComponent(url.pathname || '/');
+      if (!(pathname === '/api' || pathname.startsWith('/api/'))) {
+        try { socket.destroy(); } catch {}
+        return;
+      }
+
+      const conf = typeof getConfig === 'function' ? getConfig() : {};
+      const apiBase = conf && conf.apiBase ? String(conf.apiBase) : '';
+      if (!apiBase) {
+        try {
+          socket.write('HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n');
+        } catch {}
+        try { socket.destroy(); } catch {}
+        return;
+      }
+
+      const targetBase = apiBase.endsWith('/') ? apiBase.slice(0, -1) : apiBase;
+      const stripPrefix = pathname === '/api' ? '' : pathname.slice('/api'.length);
+      const targetUrl = new URL(stripPrefix + (url.search || ''), targetBase + '/');
+
+      const isHttps = targetUrl.protocol === 'https:';
+      const port = Number(targetUrl.port || (isHttps ? 443 : 80));
+
+      const connectOpts = {
+        host: targetUrl.hostname,
+        port,
+        servername: targetUrl.hostname
+      };
+
+      const upstream = isHttps ? tls.connect(connectOpts) : net.connect(connectOpts);
+
+      const onError = () => {
+        try { socket.destroy(); } catch {}
+        try { upstream.destroy(); } catch {}
+      };
+
+      upstream.on('error', onError);
+      socket.on('error', onError);
+
+      const readyEvent = isHttps ? 'secureConnect' : 'connect';
+      upstream.on(readyEvent, () => {
+        try {
+          // Reconstruct raw HTTP upgrade request.
+          const headers = { ...(req.headers || {}) };
+          headers.host = targetUrl.host;
+
+          let headerLines = '';
+          for (const [k, v] of Object.entries(headers)) {
+            if (typeof v === 'undefined') continue;
+            if (Array.isArray(v)) {
+              for (const vv of v) headerLines += `${k}: ${vv}\r\n`;
+            } else {
+              headerLines += `${k}: ${v}\r\n`;
+            }
+          }
+
+          const requestLine = `${req.method || 'GET'} ${targetUrl.pathname + targetUrl.search} HTTP/1.1\r\n`;
+          upstream.write(requestLine + headerLines + '\r\n');
+          if (head && head.length) upstream.write(head);
+
+          // Bi-directional piping.
+          socket.pipe(upstream);
+          upstream.pipe(socket);
+        } catch {
+          onError();
+        }
+      });
+    } catch {
+      try { socket.destroy(); } catch {}
     }
   });
 

@@ -594,14 +594,22 @@ const app = createApp({
         }
 
         const rawApiBase = String(apiBase.value || '').trim();
-        const useDirect = /^https?:\/\//i.test(rawApiBase);
+        const isAbsoluteBase = /^https?:\/\//i.test(rawApiBase);
         let socketUrl = window.location.origin;
-        try {
-          if (useDirect) socketUrl = new URL(rawApiBase).origin;
-        } catch (e) {
-          if (useDirect) socketUrl = rawApiBase.replace(/\/$/, '');
+        let socketPath = '/api/socket.io';
+
+        if (isAbsoluteBase) {
+          try {
+            const u = new URL(rawApiBase);
+            socketUrl = u.origin;
+            const p = String(u.pathname || '').replace(/\/+$/, '');
+            if (p === '/api') socketPath = '/api/socket.io';
+            else socketPath = '/socket.io';
+          } catch (e) {
+            socketUrl = rawApiBase.replace(/\/$/, '');
+            socketPath = '/socket.io';
+          }
         }
-        const socketPath = useDirect ? '/socket.io' : '/api/socket.io';
 
         const opts = {
           path: socketPath,

@@ -24,8 +24,10 @@ function getRuntimeConfig() {
 }
 
 function getWsBase() {
+  // WebSocket (socket.io) should connect to the real backend origin.
+  // The local /api HTTP proxy is for fetch() calls only.
   const conf = getRuntimeConfig();
-  return conf.apiProxyBase || conf.apiBase || '';
+  return conf.apiBase || '';
 }
 
 module.exports = {

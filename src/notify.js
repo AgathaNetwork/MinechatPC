@@ -44,8 +44,9 @@ async function connectNotifySocket(onNotify) {
 
   const token = await getToken();
 
-  // 后端基址通过环境变量配置（避免硬编码前端域名）。
-  const wsBase = getWsBase();
+  // Prefer local embedded reverse proxy if available (same-origin with UI).
+  // Fallback to direct backend origin.
+  const wsBase = String(process.env.MINECHAT_UI_BASE || '').trim() || getWsBase();
   if (!wsBase) {
     console.log('[notify] wsBase not configured; set MINECHAT_API_BASE (or MINECHAT_API_PROXY_BASE)');
     return;

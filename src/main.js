@@ -1285,9 +1285,24 @@ app.whenReady().then(async () => {
       publicDir,
       host: LOCAL_WEB_HOST,
       port: 0,
-      getConfig: getRuntimeConfig
+      getConfig: () => {
+        const conf = getRuntimeConfig();
+        // Prefer explicit proxy base if user configured it.
+        // Otherwise default to the embedded local reverse proxy (/api).
+        const localProxy = '/api';
+        return {
+          ...conf,
+          apiProxyBase: conf.apiProxyBase || localProxy
+        };
+      }
     });
     START_URL = localWebServer.baseUrl;
+    try {
+      const localOrigin = String(localWebServer?.baseUrl || '').replace(/\/$/, '');
+      if (localOrigin) process.env.MINECHAT_UI_BASE = localOrigin;
+    } catch {
+      // ignore
+    }
   } catch (e) {
     console.error('[main] failed to start local web server', e);
     try { app.quit(); } catch {}
