@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="/theme.js"></script>
+    <title>Minechat 登录</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/vendor/element-plus/index.css" />
+    <link rel="stylesheet" href="/vendor/element-plus/theme-chalk/dark/css-vars.css" />
+    <style>
+      [v-cloak]{display:none}
+    </style>
+  </head>
+  <body>
+    <div id="app" v-cloak>
+      <el-container style="height:100vh">
+        <el-main style="display:flex;align-items:center;justify-content:center;padding:12px">
+          <el-card style="max-width:520px;width:100%">
+            <template #header>
+              <div style="display:flex;align-items:center;justify-content:space-between">
+                <span style="font-weight:600">欢迎使用 Minechat</span>
+                <span style="font-size:12px;color:#888" v-if="checking">检查登录状态中…</span>
+              </div>
+            </template>
+
+            <div>
+              <div v-if="authOk === true" style="margin-bottom:12px">
+                <el-alert type="success" :closable="false" show-icon title="登录成功"></el-alert>
+                <div style="margin-top:10px;display:flex;gap:12px;align-items:center;justify-content:space-between">
+                  <div style="display:flex;align-items:center;gap:10px">
+                    <el-avatar v-if="authFaceUrl" shape="square" :src="authFaceUrl" :size="40"></el-avatar>
+                    <div>
+                      <div style="font-weight:600;line-height:1.4">{{ authUsername || '已登录' }}</div>
+                      <div style="font-size:12px;color:#888;line-height:1.4" v-if="authChatsCount !== null">会话数：{{ authChatsCount }}</div>
+                    </div>
+                  </div>
+                  <el-button type="primary" @click="gotoChat">进入会话</el-button>
+                </div>
+              </div>
+
+              <div v-else-if="authOk === false" style="margin-bottom:12px">
+                <el-alert type="error" :closable="false" show-icon :title="authError || '登录失败'"></el-alert>
+                <div v-if="authDetail" style="margin-top:8px;font-size:12px;color:#666;word-break:break-all">{{ authDetail }}</div>
+                <div v-if="authError === 'IDVERIFY_REQUIRED'" style="margin-top:10px;display:flex;justify-content:flex-end">
+                  <el-button type="primary" @click="gotoRegister">去实名注册</el-button>
+                </div>
+              </div>
+
+              <div v-else-if="hasSession" style="margin-bottom:12px">
+                <el-alert type="success" :closable="false" show-icon title="检测到已登录的会话"></el-alert>
+                <div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end">
+                  <el-button type="primary" @click="gotoChat">进入会话</el-button>
+                </div>
+              </div>
+
+              <p style="margin-top:0">使用 Microsoft 帐号登录。</p>
+              <el-button type="primary" :loading="loggingIn" :disabled="loggingIn || checking" @click="openLoginPopup">使用 Microsoft 登录</el-button>
+              <el-button style="margin-left:8px" @click="gotoRegister">实名注册</el-button>
+
+              <el-divider></el-divider>
+
+              <p style="margin-top:0">使用用户名 + TOTP 登录（已启用二步验证的账号）。</p>
+              <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+                <el-input v-model="totpUsername" placeholder="用户名" style="width:220px" clearable></el-input>
+                <el-input v-model="totpCode" placeholder="TOTP 6位验证码" style="width:220px" clearable maxlength="10"></el-input>
+                <el-button type="success" :loading="totpLoggingIn" :disabled="totpLoggingIn || checking" @click="loginWithTotp">TOTP 登录</el-button>
+              </div>
+            </div>
+          </el-card>
+        </el-main>
+      </el-container>
+    </div>
+
+    <script src="/vendor/vue/vue.global.prod.js"></script>
+    <script src="/vendor/element-plus/index.full.js"></script>
+    <script src="/login.js"></script>
+  </body>
+</html>

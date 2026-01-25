@@ -1,6 +1,8 @@
 const { app, BrowserWindow, Menu, ipcMain, session, shell, Tray } = require('electron');
 const { startNotifyListener } = require('./notify');
 const { startModImageImportListener, DEFAULT_HOST: MOD_IMPORT_DEFAULT_HOST, DEFAULT_PORT: MOD_IMPORT_DEFAULT_PORT } = require('./modImageImportListener');
+const { startLocalWebServer } = require('./localWebServer');
+const { getRuntimeConfig } = require('./runtimeConfig');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -19,9 +21,11 @@ if (!gotSingleInstanceLock) {
   try { app.quit(); } catch (e) {}
 }
 
-const START_URL = 'https://front-dev.agatha.org.cn';
+let START_URL = '';
 const PERSIST_PARTITION = 'persist:agatha-front';
-const APP_HOSTNAME = 'front-dev.agatha.org.cn';
+const APP_HOSTNAME = '127.0.0.1';
+const LOCAL_WEB_HOST = APP_HOSTNAME;
+let localWebServer = null;
 
 // Local listener for Minecraft mod -> MinechatPC.
 // Allow overriding via env for debugging.
@@ -214,26 +218,64 @@ async function setFileInputFilesViaCdp(wc, selector, filePaths) {
 }
 
 const EXACT_ALLOWED_HOSTS = new Set([
-  'front-dev.agatha.org.cn',
+  // Local embedded web server.
+  '127.0.0.1',
+  'localhost',
 
   // Microsoft identity endpoints (common set).
   'login.microsoftonline.com',
   'login.live.com',
   'account.live.com',
+  'login.windows.net',
+  'graph.microsoft.com',
   'aadcdn.msauth.net',
-  'aadcdn.msftauth.net'
+  'aadcdn.msftauth.net',
+  'aadcdn.microsoftonline-p.com'
 ]);
+
+function getConfiguredBackendHostnames() {
+  const out = new Set();
+  try {
+    const conf = getRuntimeConfig();
+    const bases = [conf?.apiBase, conf?.apiProxyBase].filter(Boolean);
+    for (const base of bases) {
+      try {
+        const u = new URL(String(base));
+        if (u.hostname) out.add(u.hostname);
+      } catch {
+        // ignore invalid base
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return out;
+}
 
 const ALLOWED_HOST_SUFFIXES = [
   // Covers regional and tenant-specific Microsoft Online hosts.
   '.microsoftonline.com',
+  '.microsoftonline-p.com',
   '.msauth.net',
-  '.msftauth.net'
+  '.msftauth.net',
+  // Live/MSA login and related domains.
+  '.live.com',
+  '.live.net',
+  // Azure AD / Microsoft identity supporting hosts.
+  '.windows.net',
+  '.msidentity.com',
+  // Static assets often served via Microsoft-owned domains.
+  '.microsoft.com',
+  // Some AADCDN assets are served via AzureEdge.
+  '.azureedge.net'
 ];
 
 function isAllowedHost(hostname) {
   if (!hostname) return false;
   if (EXACT_ALLOWED_HOSTS.has(hostname)) return true;
+  // Allow configured backend host (for auth redirects like /auth/microsoft).
+  // This keeps the login flow inside the main window instead of opening a new window.
+  if (getConfiguredBackendHostnames().has(hostname)) return true;
   return ALLOWED_HOST_SUFFIXES.some((suffix) => hostname.endsWith(suffix));
 }
 
@@ -244,6 +286,43 @@ function isAllowedUrl(urlString) {
   } catch {
     return false;
   }
+}
+
+function isAuthCallbackLikeUrl(urlString) {
+  try {
+    const url = new URL(urlString);
+    // Only treat cross-origin navigations as candidates.
+    if (isAllowedHost(url.hostname)) return false;
+
+    // The backend typically redirects back with these parameters.
+    const sp = url.searchParams;
+    const hasAuthParams =
+      sp.has('ok') ||
+      sp.has('token') ||
+      sp.has('error') ||
+      sp.has('detail') ||
+      sp.has('userId') ||
+      sp.has('username') ||
+      sp.has('faceUrl') ||
+      sp.has('chats') ||
+      sp.has('registered');
+
+    if (!hasAuthParams) return false;
+
+    // Usually redirects to a top-level entry page.
+    const p = (url.pathname || '/').toLowerCase();
+    return p === '/' || p === '/index.html' || p === '/login' || p === '/login.html';
+  } catch {
+    return false;
+  }
+}
+
+function rewriteAuthCallbackToLocal(urlString) {
+  const from = new URL(urlString);
+  const target = new URL('/', START_URL || 'http://127.0.0.1/');
+  target.search = from.search;
+  target.hash = from.hash;
+  return target.toString();
 }
 
 function shouldForcePermanentCache(urlString) {
@@ -271,7 +350,7 @@ function installPermanentCacheHeaders(sess) {
 
   // Force long-lived cache for specific static resource types.
   // Note: This does not affect cookies; it only changes response caching headers.
-  sess.webRequest.onHeadersReceived({ urls: [`https://${APP_HOSTNAME}/*`] }, (details, callback) => {
+  sess.webRequest.onHeadersReceived({ urls: [`http://${APP_HOSTNAME}/*`, `http://localhost/*`] }, (details, callback) => {
     if (!shouldForcePermanentCache(details.url)) {
       callback({ responseHeaders: details.responseHeaders });
       return;
@@ -1153,6 +1232,18 @@ function createMainWindow() {
       };
     }
 
+    // If an auth provider/backend tries to open a callback URL in a new window,
+    // force it back to the local bundled UI instead.
+    if (isAuthCallbackLikeUrl(url)) {
+      try {
+        const rewritten = rewriteAuthCallbackToLocal(url);
+        win.webContents.loadURL(rewritten);
+      } catch {
+        // ignore
+      }
+      return { action: 'deny' };
+    }
+
     // For other domains, still open in Electron (per requirement), but as a
     // separate window without tying it to the opener.
     openInElectronWindow(url);
@@ -1162,6 +1253,18 @@ function createMainWindow() {
   win.webContents.on('will-navigate', (event, url) => {
     // Keep main window on allowed hosts; open everything else in a new Electron window.
     if (!isAllowedUrl(url)) {
+      // Backend might still redirect to an old/remote front entry page.
+      // Detect callback params and rewrite to local UI, fully decoupling from any old front host.
+      if (isAuthCallbackLikeUrl(url)) {
+        event.preventDefault();
+        try {
+          const rewritten = rewriteAuthCallbackToLocal(url);
+          win.webContents.loadURL(rewritten);
+        } catch {
+          // ignore
+        }
+        return;
+      }
       event.preventDefault();
       openInElectronWindow(url);
     }
@@ -1170,12 +1273,26 @@ function createMainWindow() {
   return win;
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // Only the primary instance should continue initialization.
   if (!gotSingleInstanceLock) return;
 
-  // 启动通知监听（仅主实例）
-  try { startNotifyListener(); } catch (e) {}
+  // Start embedded local web server to serve the bundled public/ assets.
+  // This keeps all UI resources local while still allowing the UI to call the backend via /config.
+  try {
+    const publicDir = path.join(__dirname, '..', 'public');
+    localWebServer = await startLocalWebServer({
+      publicDir,
+      host: LOCAL_WEB_HOST,
+      port: 0,
+      getConfig: getRuntimeConfig
+    });
+    START_URL = localWebServer.baseUrl;
+  } catch (e) {
+    console.error('[main] failed to start local web server', e);
+    try { app.quit(); } catch {}
+    return;
+  }
 
   // Install caching policy on the persistent session.
   // Attaching once ensures it applies to main window + popups.
@@ -1191,64 +1308,67 @@ app.whenReady().then(() => {
   mainWindow = createMainWindow();
   createTray();
 
+  // 启动通知监听（仅主实例）
+  try { startNotifyListener(); } catch (e) {}
+
   // Start local listener for Minecraft mod to send image file paths.
   // The mod can call:
   //   POST http://127.0.0.1:28188/pc/gallery/import  body: {"path":"C:\\path\\to\\image.png"}
   // or:
   //   GET  http://127.0.0.1:28188/pc/gallery/import?path=C%3A%5Cpath%5Cto%5Cimage.png
-  try {
-    modImportListener = startModImageImportListener({
-      host: MOD_IMPORT_HOST,
-      port: MOD_IMPORT_PORT,
-      onImport: enqueueImport
+    try {
+      modImportListener = startModImageImportListener({
+        host: MOD_IMPORT_HOST,
+        port: MOD_IMPORT_PORT,
+        onImport: enqueueImport
+      });
+    } catch (e) {
+      modImportListener = null;
+    }
+
+    if (pendingShowMainWindow) {
+      pendingShowMainWindow = false;
+      showMainWindow();
+    }
+
+    // If a mod sent a path before UI was ready, process it now.
+    try {
+      flushImportQueue();
+    } catch {
+      // ignore
+    }
+
+    ipcMain.handle('agatha-settings:get-cache-info', async () => {
+      return getCacheInfoForPersistentSession();
     });
-  } catch (e) {
-    modImportListener = null;
-  }
 
-  if (pendingShowMainWindow) {
-    pendingShowMainWindow = false;
-    showMainWindow();
-  }
+    ipcMain.handle('agatha-settings:get-offline-cache-info', async () => {
+      return getOfflineCacheInfoForPersistentSession();
+    });
 
-  // If a mod sent a path before UI was ready, process it now.
-  try {
-    flushImportQueue();
-  } catch {
-    // ignore
-  }
+    ipcMain.handle('agatha-settings:clear-offline-cache', async () => {
+      return clearOfflineCacheForPersistentSession();
+    });
 
-  ipcMain.handle('agatha-settings:get-cache-info', async () => {
-    return getCacheInfoForPersistentSession();
-  });
+    ipcMain.handle('agatha-settings:open-cache-folder', async () => {
+      const storagePath = getPersistentSessionStoragePath();
+      if (!storagePath) return { ok: false, error: 'storagePath_unavailable' };
+      const err = await shell.openPath(storagePath);
+      return err ? { ok: false, error: err } : { ok: true };
+    });
 
-  ipcMain.handle('agatha-settings:get-offline-cache-info', async () => {
-    return getOfflineCacheInfoForPersistentSession();
-  });
+    ipcMain.handle('agatha-settings:get-system-info', async () => {
+      return getSystemInfo();
+    });
 
-  ipcMain.handle('agatha-settings:clear-offline-cache', async () => {
-    return clearOfflineCacheForPersistentSession();
-  });
-
-  ipcMain.handle('agatha-settings:open-cache-folder', async () => {
-    const storagePath = getPersistentSessionStoragePath();
-    if (!storagePath) return { ok: false, error: 'storagePath_unavailable' };
-    const err = await shell.openPath(storagePath);
-    return err ? { ok: false, error: err } : { ok: true };
-  });
-
-  ipcMain.handle('agatha-settings:get-system-info', async () => {
-    return getSystemInfo();
-  });
-
-  ipcMain.handle('agatha-settings:get-app-info', async () => {
-    const build = getBuildInfo();
-    return {
-      appVersion: app.getVersion(),
-      buildTimeIso: build?.buildTimeIso || null,
-      buildTimeMs: build?.buildTimeMs || null
-    };
-  });
+    ipcMain.handle('agatha-settings:get-app-info', async () => {
+      const build = getBuildInfo();
+      return {
+        appVersion: app.getVersion(),
+        buildTimeIso: build?.buildTimeIso || null,
+        buildTimeMs: build?.buildTimeMs || null
+      };
+    });
 
   // IPC: window controls from the injected overlay (not cookies).
   ipcMain.on('agatha-window-control', (event, action) => {
@@ -1326,6 +1446,14 @@ app.on('before-quit', () => {
   try {
     if (modImportListener && typeof modImportListener.close === 'function') {
       modImportListener.close();
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    if (localWebServer && typeof localWebServer.close === 'function') {
+      localWebServer.close();
     }
   } catch {
     // ignore

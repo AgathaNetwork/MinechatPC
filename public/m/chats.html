@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <script src="/theme.js"></script>
+    <title>会话 - Minechat</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/vendor/element-plus/index.css" />
+    <link rel="stylesheet" href="/vendor/element-plus/theme-chalk/dark/css-vars.css" />
+    <style>
+      [v-cloak]{display:none}
+      html,body{height:100%;overflow:hidden;overscroll-behavior:none;-webkit-text-size-adjust:100%}
+      body{margin:0;padding:0}
+      input,textarea,.el-input__inner,.el-textarea__inner{font-size:16px !important}
+      .top-spacer{position:fixed;top:0;left:0;right:0;height:4vh;background:var(--mc-body-bg);z-index:99}
+      .top-bar{position:fixed;top:4vh;left:0;right:0;height:50px;background:#fff;border-bottom:1px solid #e6e6e6;display:flex;align-items:center;justify-content:space-between;padding:0 12px;z-index:100}
+      .content-area{position:fixed;top:calc(4vh + 50px);left:0;right:0;bottom:56px;overflow:auto;padding:12px;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+      .bottom-nav{position:fixed;bottom:0;left:0;right:0;height:56px;background:#fff;border-top:1px solid #e6e6e6;display:flex;justify-content:space-around;align-items:center;z-index:100}
+      .nav-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;color:#666;font-size:12px;padding:4px;text-decoration:none}
+      .nav-item.active{color:#409eff}
+      .section-title{font-size:16px;font-weight:600;margin:0 0 8px 0}
+      .chat-item{padding:12px;border-bottom:1px solid var(--mc-border);cursor:pointer;display:flex;gap:10px;align-items:center;text-decoration:none;color:inherit}
+      .chat-item:active{background:var(--mc-active-bg)}
+      .unread-dot{width:8px;height:8px;border-radius:50%;background:#1890ff;flex-shrink:0}
+      .chat-preview{display:inline-flex;align-items:center;gap:6px;min-width:0}
+      .chat-preview-suffix{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .el-tag.chat-preview-tag-tight{--el-tag-height:16px;height:16px !important;line-height:16px !important;padding:0 6px !important;font-size:11px !important}
+      .el-tag.c-preview-badge{--el-tag-height:16px;height:16px !important;line-height:16px !important;padding:0 6px !important;font-size:11px !important;max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    </style>
+  </head>
+  <body>
+    <div class="top-spacer"></div>
+    <div id="app" v-cloak>
+      <div class="top-bar">
+        <h3 style="margin:0">会话</h3>
+        <div style="display:flex;align-items:center;gap:8px">
+          <el-avatar v-if="selfFaceUrl" shape="square" :src="selfFaceUrl" :size="32"></el-avatar>
+        </div>
+      </div>
+
+      <div class="content-area">
+        <div class="section-title">全服聊天</div>
+        <div @click="openGlobal" class="chat-item">
+          <el-avatar shape="square" src="/img/Ag_0404.png" :size="48"></el-avatar>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:500">全服</div>
+          </div>
+        </div>
+
+        <div style="margin-top:12px" class="section-title">会话</div>
+        <el-skeleton animated :loading="chatsLoading">
+          <template #template>
+            <div v-for="i in 6" :key="i" class="chat-item" style="cursor:default">
+              <el-skeleton-item variant="rect" style="width:48px;height:48px;border-radius:6px;flex-shrink:0"></el-skeleton-item>
+              <div style="flex:1;min-width:0">
+                <el-skeleton-item variant="text" style="width:140px"></el-skeleton-item>
+                <div style="margin-top:8px">
+                  <el-skeleton-item variant="text" style="width:220px"></el-skeleton-item>
+                </div>
+              </div>
+            </div>
+          </template>
+          <template #default>
+            <div v-for="c in chats" :key="c.id" @click="openChat(c)" class="chat-item">
+              <div style="position:relative;width:48px;height:48px;flex-shrink:0">
+                <el-avatar v-if="getChatAvatar(c)" shape="square" :src="getChatAvatar(c)" :size="48"></el-avatar>
+                <el-avatar v-else shape="square" :size="48">{{ getChatInitial(c) }}</el-avatar>
+                <span
+                  v-if="isChatPeerOnline(c)"
+                  style="position:absolute;right:-1px;bottom:-1px;width:10px;height:10px;border-radius:50%;background:#1890ff;border:2px solid #fff"
+                ></span>
+              </div>
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:500;margin-bottom:4px">{{ getChatName(c) }}</div>
+                <div style="font-size:12px;color:#999;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                  <template v-if="lastMessagePreviewTag(c)">
+                    <span class="chat-preview">
+                    <template v-if="isGroupChatItem(c) && lastMessageSenderBadge(c)">
+                      <el-tag size="small" effect="plain" type="info" class="c-preview-badge">{{ lastMessageSenderBadge(c) }}</el-tag>
+                    </template>
+                    <el-tag
+                      type="info"
+                      effect="plain"
+                      size="small"
+                      :class="{ 'chat-preview-tag-tight': !!lastMessagePreviewSuffix(c) || lastMessagePreviewTag(c)==='已撤回' }"
+                    >{{ lastMessagePreviewTag(c) }}</el-tag>
+                      <span v-if="lastMessagePreviewSuffix(c)" class="chat-preview-suffix">{{ lastMessagePreviewSuffix(c) }}</span>
+                    </span>
+                  </template>
+                  <template v-else>
+                    {{ formatLastMessage(c) }}
+                  </template>
+                </div>
+              </div>
+              <div v-if="hasUnread(c.id)" class="unread-dot"></div>
+            </div>
+          </template>
+        </el-skeleton>
+      </div>
+
+      <div class="bottom-nav">
+        <a href="/m/chats.html" class="nav-item active">
+          <el-icon :size="20"><chat-dot-round /></el-icon>
+          <span>会话</span>
+        </a>
+        <a href="/m/players.html" class="nav-item">
+          <el-icon :size="20"><user /></el-icon>
+          <span>玩家</span>
+        </a>
+        <a href="/m/gallery.html" class="nav-item">
+          <el-icon :size="20"><Collection /></el-icon>
+          <span>相册</span>
+        </a>
+        <a href="/m/me.html" class="nav-item">
+          <el-icon :size="20"><tickets /></el-icon>
+          <span>工作台</span>
+        </a>
+      </div>
+    </div>
+
+    <script src="/vendor/vue/vue.global.prod.js"></script>
+    <script src="/vendor/element-plus/index.full.js"></script>
+    <script src="/vendor/element-plus-icons/icons-vue.iife.min.js"></script>
+    <script src="/api/socket.io/socket.io.js"></script>
+    <script src="/m/mc_cache_sqlite.js"></script>
+    <script src="/m/chats.js"></script>
+    <script>
+      document.addEventListener('gesturestart', function (e) { e.preventDefault(); }, { passive: false });
+      document.addEventListener('gesturechange', function (e) { e.preventDefault(); }, { passive: false });
+      document.addEventListener('gestureend', function (e) { e.preventDefault(); }, { passive: false });
+
+      (function () {
+        var meta = document.querySelector('meta[name="viewport"]');
+        if (!meta) return;
+        var canonical = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover';
+        function restoreViewport() {
+          try {
+            meta.setAttribute('content', canonical);
+          } catch (e) {}
+        }
+        function onPossibleZoomChange() {
+          restoreViewport();
+          setTimeout(restoreViewport, 50);
+          setTimeout(restoreViewport, 250);
+        }
+        document.addEventListener('focusin', function (e) {
+          var t = e && e.target;
+          if (!t) return;
+          var tag = (t.tagName || '').toUpperCase();
+          if (tag === 'INPUT' || tag === 'TEXTAREA') onPossibleZoomChange();
+        }, true);
+        document.addEventListener('focusout', function () { onPossibleZoomChange(); }, true);
+        window.addEventListener('resize', onPossibleZoomChange);
+        window.addEventListener('orientationchange', onPossibleZoomChange);
+        if (window.visualViewport) {
+          window.visualViewport.addEventListener('resize', onPossibleZoomChange);
+        }
+      })();
+    </script>
+  </body>
+</html>

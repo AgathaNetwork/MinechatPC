@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <script src="/theme.js"></script>
+    <title>网盘 - Minechat</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/vendor/element-plus/index.css" />
+    <link rel="stylesheet" href="/vendor/element-plus/theme-chalk/dark/css-vars.css" />
+    <style>
+      [v-cloak]{display:none}
+      html,body{height:100%;overflow:hidden;overscroll-behavior:none;-webkit-text-size-adjust:100%}
+      body{margin:0;padding:0;background:#f5f5f5}
+      input,textarea,.el-input__inner,.el-textarea__inner{font-size:16px !important}
+      .top-spacer{position:fixed;top:0;left:0;right:0;height:4vh;background:var(--mc-body-bg);z-index:99}
+      .top-bar{position:fixed;top:4vh;left:0;right:0;height:50px;background:#fff;border-bottom:1px solid #e6e6e6;display:flex;align-items:center;justify-content:space-between;padding:0 12px;z-index:100}
+      .content-area{position:fixed;top:calc(4vh + 50px);left:0;right:0;bottom:56px;overflow:auto;padding:12px;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+      .bottom-nav{position:fixed;bottom:0;left:0;right:0;height:56px;background:#fff;border-top:1px solid #e6e6e6;display:flex;justify-content:space-around;align-items:center;z-index:100}
+      .nav-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;color:#666;font-size:12px;padding:4px;text-decoration:none}
+      .nav-item.active{color:#409eff}
+      .wrap{word-break:break-all;overflow-wrap:anywhere}
+    </style>
+  </head>
+  <body>
+    <div class="top-spacer"></div>
+    <div id="app" v-cloak>
+      <div class="top-bar">
+        <h3 style="margin:0">网盘</h3>
+        <div>
+          <el-button size="small" plain :loading="loading" :disabled="loading" @click="refresh">刷新</el-button>
+        </div>
+      </div>
+
+      <div class="content-area">
+        <el-card>
+          <el-alert
+            type="info"
+            :closable="false"
+            show-icon
+            title="说明"
+            description="不支持文件夹；文件上传后对所有人可见，请勿发布违法违规内容。"
+          ></el-alert>
+
+          <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <el-input v-model="uploadName" placeholder="文件名（可选，默认原文件名）" clearable style="flex:1;min-width:180px"></el-input>
+            <input ref="uploadInput" type="file" style="max-width:100%" />
+            <el-button type="primary" :loading="uploading" :disabled="uploading" @click="upload">上传</el-button>
+          </div>
+
+          <div style="margin-top:12px" v-if="lastError">
+            <el-alert type="error" :closable="false" show-icon title="操作失败"></el-alert>
+            <div style="margin-top:8px;font-size:12px;color:#666" class="wrap">{{ lastError }}</div>
+          </div>
+
+          <div style="margin-top:12px;font-size:12px;color:#888" v-if="files && files.length">共 {{ files.length }} 个</div>
+
+          <el-table :data="files" border size="small" style="width:100%;margin-top:10px" v-loading="loading">
+            <el-table-column prop="name" label="名称" min-width="180"></el-table-column>
+            <el-table-column prop="sizeText" label="大小" width="90"></el-table-column>
+            <el-table-column label="操作" width="210" fixed="right">
+              <template #default="scope">
+                <el-button size="small" plain @click="downloadFile(scope.row)">下载</el-button>
+                <el-button size="small" plain @click="renameFile(scope.row)">重命名</el-button>
+                <el-button size="small" type="danger" plain @click="deleteFile(scope.row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-card>
+      </div>
+
+      <div class="bottom-nav">
+        <a href="/m/chats.html" class="nav-item">
+          <el-icon :size="20"><chat-dot-round /></el-icon>
+          <span>会话</span>
+        </a>
+        <a href="/m/players.html" class="nav-item">
+          <el-icon :size="20"><user /></el-icon>
+          <span>玩家</span>
+        </a>
+        <a href="/m/gallery.html" class="nav-item">
+          <el-icon :size="20"><Collection /></el-icon>
+          <span>相册</span>
+        </a>
+        <a href="/m/me.html" class="nav-item">
+          <el-icon :size="20"><tickets /></el-icon>
+          <span>工作台</span>
+        </a>
+      </div>
+    </div>
+
+    <script src="/vendor/vue/vue.global.prod.js"></script>
+    <script src="/vendor/element-plus/index.full.js"></script>
+    <script src="/vendor/element-plus-icons/icons-vue.iife.min.js"></script>
+    <script src="/m/disk.js"></script>
+    <script>
+      document.addEventListener('gesturestart', function (e) { e.preventDefault(); }, { passive: false });
+      document.addEventListener('gesturechange', function (e) { e.preventDefault(); }, { passive: false });
+      document.addEventListener('gestureend', function (e) { e.preventDefault(); }, { passive: false });
+
+      (function () {
+        var meta = document.querySelector('meta[name="viewport"]');
+        if (!meta) return;
+        var canonical = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover';
+        function restoreViewport() {
+          try {
+            meta.setAttribute('content', canonical);
+          } catch (e) {}
+        }
+        function onPossibleZoomChange() {
+          restoreViewport();
+          setTimeout(restoreViewport, 50);
+          setTimeout(restoreViewport, 250);
+        }
+        document.addEventListener('focusin', function (e) {
+          var t = e && e.target;
+          if (!t) return;
+          var tag = (t.tagName || '').toUpperCase();
+          if (tag === 'INPUT' || tag === 'TEXTAREA') onPossibleZoomChange();
+        }, true);
+        document.addEventListener('focusout', function () { onPossibleZoomChange(); }, true);
+        window.addEventListener('resize', onPossibleZoomChange);
+        window.addEventListener('orientationchange', onPossibleZoomChange);
+        if (window.visualViewport) {
+          window.visualViewport.addEventListener('resize', onPossibleZoomChange);
+        }
+      })();
+    </script>
+  </body>
+</html>

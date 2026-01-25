@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <script src="/theme.js"></script>
+    <title>工作台 - Minechat</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/vendor/element-plus/index.css" />
+    <link rel="stylesheet" href="/vendor/element-plus/theme-chalk/dark/css-vars.css" />
+    <style>
+      [v-cloak]{display:none}
+      html,body{height:100%;overflow:hidden;overscroll-behavior:none;-webkit-text-size-adjust:100%}
+      body{margin:0;padding:0;background:#f5f5f5}
+      input,textarea,.el-input__inner,.el-textarea__inner{font-size:16px !important}
+      .el-select .el-select__selected-item,.el-select .el-select__placeholder{font-size:16px !important}
+      .top-spacer{position:fixed;top:0;left:0;right:0;height:4vh;background:var(--mc-body-bg);z-index:99}
+      .top-bar{position:fixed;top:4vh;left:0;right:0;height:50px;background:#fff;border-bottom:1px solid #e6e6e6;display:flex;align-items:center;justify-content:space-between;padding:0 12px;z-index:100}
+      .content-area{position:fixed;top:calc(4vh + 50px);left:0;right:0;bottom:56px;overflow:auto;padding:12px;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+      .bottom-nav{position:fixed;bottom:0;left:0;right:0;height:56px;background:#fff;border-top:1px solid #e6e6e6;display:flex;justify-content:space-around;align-items:center;z-index:100}
+      .nav-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;color:#666;font-size:12px;padding:4px;text-decoration:none}
+      .nav-item.active{color:#409eff}
+      .action-row{display:flex;gap:8px}
+      .action-row .el-button{flex:1;min-width:0}
+      .action-row.two-cols{flex-wrap:wrap}
+      .action-row.two-cols .el-button{flex:0 0 calc((100% - 8px) / 2)}
+      .playtime-months{display:grid;grid-template-columns:repeat(auto-fit, 260px);gap:12px;justify-content:center;align-items:start}
+      .playtime-month-card{width:260px}
+      .playtime-month-title{font-weight:600;text-align:center;margin-bottom:6px}
+      .playtime-dow{display:grid;grid-template-columns:repeat(7, 14px);gap:4px;justify-content:center;font-size:12px;color:#666;margin-bottom:6px}
+      .playtime-dow > div{text-align:center;line-height:14px;height:14px}
+      .playtime-cells{display:grid;grid-template-columns:repeat(7, 14px);grid-auto-rows:14px;gap:4px;justify-content:center}
+    </style>
+  </head>
+  <body>
+    <div class="top-spacer"></div>
+    <div id="app" v-cloak>
+      <div class="top-bar">
+        <h3 style="margin:0">工作台</h3>
+        <span></span>
+      </div>
+
+      <div class="content-area">
+        <el-card>
+          <el-skeleton :loading="loading" animated>
+            <template #template>
+              <div style="display:flex;gap:16px;align-items:center;padding:12px">
+                <el-skeleton-item variant="image" style="width:64px;height:64px;border-radius:8px"></el-skeleton-item>
+                <div style="flex:1">
+                  <el-skeleton-item variant="text" style="width:45%"></el-skeleton-item>
+                  <el-skeleton-item variant="text" style="width:60%;margin-top:10px"></el-skeleton-item>
+                </div>
+              </div>
+              <el-skeleton-item variant="text" style="width:100%;margin:0 12px"></el-skeleton-item>
+              <el-skeleton-item variant="text" style="width:40%;margin:10px 12px 12px"></el-skeleton-item>
+            </template>
+
+            <template #default>
+              <div style="display:flex;gap:16px;align-items:center;padding:12px">
+                <el-avatar shape="square" :src="selfFaceUrl || ''" :size="64" style="flex:0 0 auto">{{ selfInitial }}</el-avatar>
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:18px;font-weight:600;margin-bottom:4px">{{ selfDisplayName }}</div>
+                  <div style="font-size:13px;color:#888;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ selfIdHint }}</div>
+                  <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+                    <el-tag size="small" :type="selfOnlineDisplay ? 'success' : 'info'">{{ selfOnlineDisplay ? '在线' : '离线' }}</el-tag>
+                  </div>
+                </div>
+              </div>
+
+              <div style="padding:0 12px 12px">
+                <el-table :data="profileRows" border size="small" style="width:100%;margin-top:10px" :show-header="false">
+                  <el-table-column prop="k" width="120"></el-table-column>
+                  <el-table-column prop="v"></el-table-column>
+                </el-table>
+              </div>
+
+              <div style="padding:0 12px 12px">
+                <div class="action-row">
+                  <!-- buttons moved to 账户服务 -->
+                </div>
+              </div>
+            </template>
+          </el-skeleton>
+        </el-card>
+
+        <div v-if="lastResult" style="margin-top:12px">
+          <el-alert type="success" :closable="false" show-icon title="更新成功"></el-alert>
+        </div>
+
+        <div v-if="lastError" style="margin-top:12px">
+          <el-alert type="error" :closable="false" show-icon title="更新失败"></el-alert>
+          <div style="margin-top:8px;font-size:12px;color:#666;word-break:break-all">{{ lastError }}</div>
+        </div>
+
+        <el-card style="margin-top:12px">
+          <template #header>
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <span style="font-weight:600">账户服务</span>
+            </div>
+          </template>
+
+          <div style="padding:12px">
+            <div class="action-row">
+              <el-button plain @click="openPasteDialog">
+                <el-icon style="margin-right:4px"><edit /></el-icon>
+                设置签名档
+              </el-button>
+              <el-button plain @click="openIdDialog">
+                <el-icon style="margin-right:4px"><document /></el-icon>
+                实名认证查询
+              </el-button>
+            </div>
+
+            <div class="action-row" style="margin-top:12px">
+              <el-button plain @click="openHistoryDialog">
+                <el-icon style="margin-right:4px"><clock /></el-icon>
+                登录记录查询
+              </el-button>
+            </div>
+
+            <div class="action-row" style="margin-top:12px">
+              <el-button plain :loading="updating" :disabled="!isLoggedIn || updating || loading" @click="updateFace">
+                <el-icon style="margin-right:4px"><refresh /></el-icon>
+                更新头像
+              </el-button>
+              <el-button plain :disabled="!isLoggedIn || updating || loading" @click="logout">
+                <el-icon style="margin-right:4px"><top-right /></el-icon>
+                登出
+              </el-button>
+            </div>
+          </div>
+        </el-card>
+
+        <el-card style="margin-top:12px">
+          <template #header>
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <span style="font-weight:600">游戏服务</span>
+            </div>
+          </template>
+
+          <div style="padding:12px">
+            <div class="action-row">
+              <el-button plain @click="openHomeDialog">
+                <el-icon style="margin-right:4px"><search /></el-icon>
+                Home查询
+              </el-button>
+              <el-button plain @click="gotoMaterials">
+                <el-icon style="margin-right:4px"><list /></el-icon>
+                材料列表管理
+              </el-button>
+            </div>
+
+            <div class="action-row" style="margin-top:12px">
+              <el-button plain @click="openPlaytimeDialog">
+                <el-icon style="margin-right:4px"><stopwatch /></el-icon>
+                游玩时长记录
+              </el-button>
+              <el-button plain @click="gotoBigMap">
+                <el-icon style="margin-right:4px"><location /></el-icon>
+                大地图
+              </el-button>
+            </div>
+
+            <div class="action-row" style="margin-top:12px">
+              <el-button plain @click="gotoDisk">
+                <el-icon style="margin-right:4px"><folder-opened /></el-icon>
+                网盘
+              </el-button>
+            </div>
+          </div>
+        </el-card>
+
+        <el-card style="margin-top:12px">
+          <template #header>
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <span style="font-weight:600">设置</span>
+            </div>
+          </template>
+
+          <div style="padding:12px;display:flex;align-items:center;justify-content:space-between;gap:10px">
+            <div style="font-size:14px;color:var(--mc-text-regular)">主题</div>
+            <el-switch v-model="themeDark" inline-prompt active-text="深色" inactive-text="浅色"></el-switch>
+          </div>
+
+		  <div style="padding:0 12px 12px">
+			<el-button plain style="width:100%" @click="openAppDialog">
+			  <el-icon style="margin-right:4px"><setting /></el-icon>
+			  App设置
+			</el-button>
+		  </div>
+        </el-card>
+      </div>
+
+      <div class="bottom-nav">
+        <a href="/m/chats.html" class="nav-item">
+          <el-icon :size="20"><chat-dot-round /></el-icon>
+          <span>会话</span>
+        </a>
+        <a href="/m/players.html" class="nav-item">
+          <el-icon :size="20"><user /></el-icon>
+          <span>玩家</span>
+        </a>
+        <a href="/m/gallery.html" class="nav-item">
+          <el-icon :size="20"><Collection /></el-icon>
+          <span>相册</span>
+        </a>
+        <a href="/m/me.html" class="nav-item active">
+          <el-icon :size="20"><tickets /></el-icon>
+          <span>工作台</span>
+        </a>
+      </div>
+
+        <el-dialog v-model="idDialogVisible" title="实名认证查询" width="92%" top="10vh">
+          <el-alert v-if="!isLoggedIn" type="warning" :closable="false" show-icon title="需要登录后才能查询"></el-alert>
+          <div style="margin-top:12px;font-size:12px;color:#888" v-if="idLoading">加载中…</div>
+          <div style="margin-top:12px" v-if="idError">
+            <el-alert type="error" :closable="false" show-icon title="查询失败"></el-alert>
+            <div style="margin-top:8px;font-size:12px;color:#666;word-break:break-all">{{ idError }}</div>
+          </div>
+          <div style="margin-top:12px" v-if="idRows && idRows.length">
+            <el-table :data="idRows" border size="small" style="width:100%" :show-header="false">
+              <el-table-column prop="k" width="120"></el-table-column>
+              <el-table-column prop="v"></el-table-column>
+            </el-table>
+          </div>
+        </el-dialog>
+
+        <el-dialog v-model="historyDialogVisible" title="登录记录查询" width="92%" top="10vh">
+          <div style="margin-top:12px;font-size:12px;color:#888" v-if="historyLoading">加载中…</div>
+          <div style="margin-top:6px;font-size:12px;color:#888" v-else-if="historyList && historyList.length">共 {{ historyList.length }} 条，最多显示10条</div>
+          <div style="margin-top:12px" v-if="historyError">
+            <el-alert type="error" :closable="false" show-icon title="查询失败"></el-alert>
+            <div style="margin-top:8px;font-size:12px;color:#666;word-break:break-all">{{ historyError }}</div>
+          </div>
+          <div style="margin-top:12px" v-if="historyList && historyList.length">
+            <el-table :data="historyList" size="small" style="width:100%">
+              <el-table-column prop="time" label="时间" min-width="140"></el-table-column>
+              <el-table-column prop="ip" label="IP" min-width="110"></el-table-column>
+            </el-table>
+          </div>
+        </el-dialog>
+
+        <el-dialog v-model="pasteDialogVisible" title="设置签名档" width="92%" top="10vh" :close-on-click-modal="false">
+          <el-alert v-if="!isLoggedIn" type="warning" :closable="false" show-icon title="需要登录后才能设置"></el-alert>
+          <el-alert
+            v-else
+            type="info"
+            :closable="false"
+            show-icon
+            title="提示"
+            description="签名档经审核后对所有人可见。请勿发布违法、违规或不当内容。"
+            style="margin-top:8px"
+          ></el-alert>
+
+          <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <el-button plain :loading="pasteLoading" :disabled="pasteLoading" @click="loadPasteExisting(true)">复原</el-button>
+            <el-button plain :disabled="pasteSaving" @click="pasteEditMarkdown = ''">清空</el-button>
+            <el-button type="primary" :loading="pasteSaving" :disabled="!isLoggedIn || pasteSaving" @click="savePaste">提交保存</el-button>
+            <span style="font-size:12px;color:#888" v-if="pasteExistingTimeText">当前已通过版本：{{ pasteExistingTimeText }}</span>
+          </div>
+
+          <div style="margin-top:12px">
+            <el-input
+              v-model="pasteEditMarkdown"
+              type="textarea"
+              :rows="10"
+              placeholder="支持简易 Markdown：# 标题、**粗体**、*斜体*、`代码`、```代码块```、- 列表、[链接](https://...)"
+            ></el-input>
+          </div>
+
+          <div style="margin-top:12px" v-if="pasteError">
+            <el-alert type="error" :closable="false" show-icon title="提交失败"></el-alert>
+            <div style="margin-top:8px;font-size:12px;color:#666;word-break:break-all">{{ pasteError }}</div>
+          </div>
+
+          <div style="margin-top:12px" v-if="pasteResult">
+            <el-alert type="success" :closable="false" show-icon title="提交成功"></el-alert>
+            <div style="margin-top:8px;font-size:12px;color:#666;word-break:break-all">{{ pasteResult }}</div>
+          </div>
+
+          <div style="margin-top:12px">
+            <div style="font-weight:600;margin-bottom:6px">预览</div>
+            <div
+              v-if="pastePreviewHtml"
+              v-html="pastePreviewHtml"
+              style="border:1px solid var(--el-border-color);border-radius:8px;padding:10px;background:var(--mc-surface);max-height:360px;overflow:auto"
+            ></div>
+            <div v-else style="font-size:12px;color:#888">暂无内容</div>
+          </div>
+        </el-dialog>
+
+        <el-dialog v-model="playtimeDialogVisible" title="游玩时长记录" width="92%" top="10vh">
+          <el-alert v-if="!isLoggedIn" type="warning" :closable="false" show-icon title="需要登录后才能查询"></el-alert>
+
+          <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <el-button plain :loading="playtimeLoading" :disabled="!isLoggedIn || playtimeLoading" @click="runPlaytimeQuery">刷新</el-button>
+            <span style="font-size:12px;color:#888" v-if="playtimeLoading">加载中…</span>
+            <span style="font-size:12px;color:#888" v-else-if="playtimeSummaryText">{{ playtimeSummaryText }}</span>
+          </div>
+
+          <div style="margin-top:12px" v-if="playtimeError">
+            <el-alert type="error" :closable="false" show-icon title="查询失败"></el-alert>
+            <div style="margin-top:8px;font-size:12px;color:#666;word-break:break-all">{{ playtimeError }}</div>
+          </div>
+
+          <div style="margin-top:12px" v-if="playtimeHasAny">
+            <div class="playtime-months">
+              <el-card v-for="m in playtimeMonthBlocks" :key="m.key" class="playtime-month-card" :body-style="{ padding: '8px' }">
+                <div class="playtime-month-title">{{ m.title }}</div>
+                <div class="playtime-dow">
+                  <div v-for="w in ['日','一','二','三','四','五','六']" :key="w">{{ w }}</div>
+                </div>
+                <div class="playtime-cells">
+                  <template v-for="cell in m.cells" :key="cell.key">
+                    <div v-if="cell.kind === 'pad'" :style="playtimeCellStyle(cell)"></div>
+                    <el-popover v-else placement="top" trigger="click" :teleported="false">
+                      <template #reference>
+                        <div :style="playtimeCellStyle(cell)"></div>
+                      </template>
+                      <div style="font-size:12px;line-height:1.6">
+                        <div style="font-weight:600">{{ cell.dayKey }}</div>
+                        <div v-if="cell.seconds > 0">在线时长：{{ cell.durationText }}（{{ cell.seconds }}秒）</div>
+                        <div v-else>无记录</div>
+                      </div>
+                    </el-popover>
+                  </template>
+                </div>
+              </el-card>
+            </div>
+            <div style="margin-top:8px;font-size:12px;color:#888">统计范围：最近 365 天（按每天在线秒数统计）</div>
+          </div>
+
+          <div style="margin-top:12px;font-size:12px;color:#888" v-else-if="!playtimeLoading && isLoggedIn">暂无游玩记录</div>
+        </el-dialog>
+
+        <el-dialog v-model="homeDialogVisible" title="Home查询" width="92%" top="10vh">
+          <el-alert v-if="!isLoggedIn" type="warning" :closable="false" show-icon title="需要登录后才能查询"></el-alert>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px">
+            <el-input v-model="homeNameQuery" placeholder="按 Home名 模糊搜索" style="width:260px" clearable></el-input>
+            <el-select v-model="homeWorldFilter" placeholder="选择世界" clearable style="width:160px">
+              <el-option label="主世界" value="world"></el-option>
+              <el-option label="下界" value="world_nether"></el-option>
+              <el-option label="末地" value="world_the_end"></el-option>
+            </el-select>
+          </div>
+          <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+            <el-button plain :loading="homeLoading" :disabled="!isLoggedIn || homeLoading" @click="runHomeQuery">刷新</el-button>
+            <span style="font-size:12px;color:#888" v-if="homeLoading">加载中…</span>
+            <span style="font-size:12px;color:#888" v-else-if="filteredHomes && filteredHomes.length">共 {{ filteredHomes.length }} 条</span>
+          </div>
+
+          <div style="margin-top:12px" v-if="homeError">
+            <el-alert type="error" :closable="false" show-icon title="查询失败"></el-alert>
+            <div style="margin-top:8px;font-size:12px;color:#666;word-break:break-all">{{ homeError }}</div>
+          </div>
+
+          <div style="margin-top:12px" v-if="filteredHomes && filteredHomes.length">
+            <el-table :data="filteredHomes" size="small" style="width:100%">
+              <el-table-column prop="name" label="Home" min-width="120"></el-table-column>
+              <el-table-column prop="worldLabel" label="世界" min-width="120"></el-table-column>
+              <el-table-column prop="x" label="X" width="80"></el-table-column>
+              <el-table-column prop="y" label="Y" width="70"></el-table-column>
+              <el-table-column prop="z" label="Z" width="80"></el-table-column>
+            </el-table>
+          </div>
+
+          <div style="margin-top:12px;font-size:12px;color:#888" v-else-if="!homeLoading && isLoggedIn">暂无 home 数据</div>
+        </el-dialog>
+
+    <el-dialog v-model="appDialogVisible" title="App设置" width="92%" top="10vh">
+      <el-tabs v-model="appDialogTab" stretch>
+        <el-tab-pane label="通用" name="general">
+          <el-alert v-if="!isAppEnv" type="info" :closable="false" show-icon title="当前为浏览器环境，部分 App 能力不可用"></el-alert>
+
+          <div style="margin-top:12px;font-weight:600">缓存</div>
+          <div style="margin-top:10px">
+            <div>
+              <el-button plain style="width:100%" :loading="cacheBusy" @click="refreshAppCache">刷新缓存大小</el-button>
+            </div>
+            <div style="margin-top:8px">
+              <el-button plain style="width:100%" :loading="cacheBusy" :disabled="!isAppEnv || cacheBusy" @click="clearAppCache">清理App缓存</el-button>
+            </div>
+            <div style="margin-top:8px">
+              <el-button plain style="width:100%" @click="clearWebStorage">清理网页本地存储</el-button>
+            </div>
+            <div style="margin-top:8px">
+              <el-button plain style="width:100%" @click="clearCookies">清理Cookie</el-button>
+            </div>
+          </div>
+          <div style="margin-top:8px;font-size:12px;color:#888" v-if="cacheSizeText">App缓存大小：{{ cacheSizeText }}</div>
+
+          <div style="margin-top:16px;font-weight:600">系统信息</div>
+          <div style="margin-top:10px">
+          <el-table :data="appInfoRows" border size="small" style="width:100%" :show-header="false">
+            <el-table-column prop="k" width="120"></el-table-column>
+            <el-table-column prop="v"></el-table-column>
+          </el-table>
+          </div>
+        </el-tab-pane>
+
+        <el-tab-pane label="关于" name="about">
+          <div style="font-size:12px;color:var(--mc-text-secondary);line-height:1.6">
+            <div>用于展示 App 版本与构建信息。</div>
+          </div>
+
+          <div style="margin-top:10px">
+            <el-table :data="appAboutRows" border size="small" style="width:100%" :show-header="false">
+              <el-table-column prop="k" width="120"></el-table-column>
+              <el-table-column prop="v"></el-table-column>
+            </el-table>
+          </div>
+        </el-tab-pane>
+      </el-tabs>
+    </el-dialog>
+    </div>
+
+    <script src="/vendor/vue/vue.global.prod.js"></script>
+    <script src="/vendor/element-plus/index.full.js"></script>
+    <script src="/vendor/element-plus-icons/icons-vue.iife.min.js"></script>
+    <script src="/m/me.js"></script>
+    <script>
+      document.addEventListener('gesturestart', function (e) { e.preventDefault(); }, { passive: false });
+      document.addEventListener('gesturechange', function (e) { e.preventDefault(); }, { passive: false });
+      document.addEventListener('gestureend', function (e) { e.preventDefault(); }, { passive: false });
+
+      (function () {
+        var meta = document.querySelector('meta[name="viewport"]');
+        if (!meta) return;
+        var canonical = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover';
+        function restoreViewport() {
+          try {
+            meta.setAttribute('content', canonical);
+          } catch (e) {}
+        }
+        function onPossibleZoomChange() {
+          restoreViewport();
+          setTimeout(restoreViewport, 50);
+          setTimeout(restoreViewport, 250);
+        }
+        document.addEventListener('focusin', function (e) {
+          var t = e && e.target;
+          if (!t) return;
+          var tag = (t.tagName || '').toUpperCase();
+          if (tag === 'INPUT' || tag === 'TEXTAREA') onPossibleZoomChange();
+        }, true);
+        document.addEventListener('focusout', function () { onPossibleZoomChange(); }, true);
+        window.addEventListener('resize', onPossibleZoomChange);
+        window.addEventListener('orientationchange', onPossibleZoomChange);
+        if (window.visualViewport) {
+          window.visualViewport.addEventListener('resize', onPossibleZoomChange);
+        }
+      })();
+    </script>
+  </body>
+</html>

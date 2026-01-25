@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <script src="/theme.js"></script>
+    <title>相册 - Minechat</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/vendor/element-plus/index.css" />
+    <link rel="stylesheet" href="/vendor/element-plus/theme-chalk/dark/css-vars.css" />
+    <style>
+      [v-cloak]{display:none}
+      html,body{height:100%;overflow:hidden;overscroll-behavior:none;-webkit-text-size-adjust:100%}
+      body{margin:0;padding:0;background:#f5f5f5}
+      input,textarea,.el-input__inner,.el-textarea__inner{font-size:16px !important}
+      .el-select .el-select__selected-item,.el-select .el-select__placeholder{font-size:16px !important}
+      .top-spacer{position:fixed;top:0;left:0;right:0;height:4vh;background:var(--mc-body-bg);z-index:99}
+      .top-bar{position:fixed;top:4vh;left:0;right:0;height:50px;background:#fff;border-bottom:1px solid #e6e6e6;display:flex;align-items:center;justify-content:space-between;padding:0 12px;z-index:100}
+      .content-area{position:fixed;top:calc(4vh + 50px);left:0;right:0;bottom:56px;overflow:auto;padding:12px;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+      .bottom-nav{position:fixed;bottom:0;left:0;right:0;height:56px;background:#fff;border-top:1px solid #e6e6e6;display:flex;justify-content:space-around;align-items:center;z-index:100}
+      .nav-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;color:#666;font-size:12px;padding:4px;text-decoration:none}
+      .nav-item.active{color:#409eff}
+      .g-card{margin-bottom:12px}
+      .g-thumb{width:100%;height:180px;border-radius:8px;overflow:hidden;background:var(--el-fill-color-lighter);border:1px solid var(--el-border-color-lighter)}
+      .g-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+      .g-tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+      .g-sub{font-size:12px;color:var(--mc-text-secondary);line-height:1.5;margin-top:6px}
+      .g-desc{margin-top:8px;font-size:13px;color:var(--mc-text-regular);line-height:1.5;word-break:break-word}
+      .g-detail-img{width:100%;max-height:55vh;object-fit:contain;background:var(--el-fill-color-lighter);border-radius:8px;border:1px solid var(--el-border-color-lighter)}
+    </style>
+  </head>
+  <body>
+    <div class="top-spacer"></div>
+    <div id="app" v-cloak>
+      <div class="top-bar">
+        <h3 style="margin:0">相册</h3>
+        <span></span>
+      </div>
+
+      <div class="content-area">
+        <el-card>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <el-input v-model="q" placeholder="按名称搜索" clearable style="flex:1;min-width:160px" @keyup.enter="applyFilters"></el-input>
+            <el-button plain :loading="loading" @click="applyFilters">筛选</el-button>
+            <el-button plain :disabled="loading" @click="resetFilters">重置</el-button>
+          </div>
+
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+            <el-input v-model="year" placeholder="年份（如 2025）" clearable style="width:150px"></el-input>
+            <el-select v-model="world" placeholder="世界" clearable style="width:150px">
+              <el-option v-for="w in worldOptions" :key="w.value" :label="w.label" :value="w.value"></el-option>
+            </el-select>
+            <el-select v-model="type" placeholder="类型" clearable style="width:150px">
+              <el-option v-for="t in typeOptions" :key="t.value" :label="t.label" :value="t.value"></el-option>
+            </el-select>
+          </div>
+
+          <div style="margin-top:10px;font-size:12px;color:#888" v-if="loading">加载中…</div>
+          <div style="margin-top:10px;font-size:12px;color:#888" v-else-if="items.length">已加载 {{ items.length }} 条</div>
+
+          <div style="margin-top:12px" v-if="loadError">
+            <el-alert type="error" :closable="false" show-icon title="加载失败"></el-alert>
+            <div style="margin-top:8px;font-size:12px;color:#666;word-break:break-all">{{ loadError }}</div>
+          </div>
+        </el-card>
+
+        <el-skeleton animated :loading="loading && items.length===0" style="margin-top:12px">
+          <template #template>
+            <el-card v-for="i in 4" :key="i" class="g-card" :body-style="{ padding: '12px' }">
+              <el-skeleton-item variant="rect" style="width:100%;height:180px;border-radius:8px"></el-skeleton-item>
+              <el-skeleton-item variant="text" style="width:55%;margin-top:10px"></el-skeleton-item>
+              <el-skeleton-item variant="text" style="width:80%;margin-top:8px"></el-skeleton-item>
+            </el-card>
+          </template>
+          <template #default>
+            <el-card v-for="it in items" :key="it.id" class="g-card" :body-style="{ padding: '12px' }" @click="openDetail(it)">
+              <div class="g-thumb"><img v-if="it.thumbUrl" :src="it.thumbUrl" alt="thumb" /></div>
+              <div style="margin-top:10px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ it.name || ('#'+it.id) }}</div>
+              <div class="g-sub">{{ it.uploaderText }} · {{ it.timeText }}</div>
+              <div class="g-tags">
+                <el-tag size="small" effect="plain" @click.stop="setYear(it.year)">{{ it.year || '-' }}</el-tag>
+                <el-tag size="small" effect="plain" @click.stop="setWorld(it.world)">{{ it.worldName }}</el-tag>
+                <el-tag size="small" effect="plain" @click.stop="setType(it.type)">{{ it.typeName }}</el-tag>
+              </div>
+              <div class="g-desc" v-if="it.annotation">{{ it.annotation }}</div>
+            </el-card>
+
+            <div style="display:flex;justify-content:center;margin:12px 0">
+              <el-button plain :loading="loadingMore" :disabled="loading || loadingMore || noMore" @click="loadMore">
+                {{ noMore ? '没有更多了' : '加载更多' }}
+              </el-button>
+            </div>
+          </template>
+        </el-skeleton>
+
+        <el-dialog v-model="detailVisible" width="92%" top="10vh">
+          <template #header>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+              <div style="font-weight:600">图片详情</div>
+              <el-button plain size="small" :disabled="!detail || detailLoading" @click.stop="openShare(detail && detail.id)">分享</el-button>
+            </div>
+          </template>
+          <el-skeleton :loading="detailLoading" animated>
+            <template #template>
+              <el-skeleton-item variant="rect" style="width:100%;height:240px;border-radius:8px"></el-skeleton-item>
+              <el-skeleton-item variant="text" style="width:45%;margin-top:12px"></el-skeleton-item>
+              <el-skeleton-item variant="text" style="width:70%;margin-top:10px"></el-skeleton-item>
+            </template>
+            <template #default>
+              <div v-if="detailError" style="margin-bottom:12px">
+                <el-alert type="error" :closable="false" show-icon title="加载失败"></el-alert>
+                <div style="margin-top:8px;font-size:12px;color:#666;word-break:break-all">{{ detailError }}</div>
+              </div>
+
+              <div v-if="detail">
+                <img v-if="detail.imageUrl" class="g-detail-img" :src="detail.imageUrl" alt="image" />
+
+                <div style="margin-top:12px">
+                  <div style="font-weight:600;font-size:16px">{{ detail.name || ('#'+detail.id) }}</div>
+                  <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+                    <el-tag size="small" effect="plain">{{ detail.year || '-' }}</el-tag>
+                    <el-tag size="small" effect="plain">{{ detail.worldName }}</el-tag>
+                    <el-tag size="small" effect="plain">{{ detail.typeName }}</el-tag>
+                    <el-tag size="small" type="info" effect="plain" v-if="detail.uploader">{{ detail.uploader }}</el-tag>
+                  </div>
+
+                  <div v-if="detail.annotation" style="margin-top:10px;white-space:pre-wrap;word-break:break-word">{{ detail.annotation }}</div>
+
+                  <el-divider v-if="detail.players && detail.players.length" style="margin:14px 0 10px"></el-divider>
+                  <div style="margin-top:10px" v-if="detail.players && detail.players.length">
+                    <div style="font-weight:600;margin-bottom:6px">参与者</div>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap">
+                      <el-tag v-for="p in detail.players" :key="p" size="small" effect="plain">{{ p }}</el-tag>
+                    </div>
+                  </div>
+
+                  <div style="margin-top:10px" v-if="(detail.position && detail.position.mapUrl) || (detail.positionRows && detail.positionRows.length)">
+                    <el-button
+                      v-if="detail.position && detail.position.mapUrl"
+                      circle
+                      size="small"
+                      type="default"
+                      title="在地图中打开"
+                      @click="openDetailOnMap"
+                    >
+                      <el-icon><location /></el-icon>
+                    </el-button>
+                    <div style="margin-top:8px" v-if="detail.positionRows && detail.positionRows.length">
+                      <el-table :data="detail.positionRows" border size="small" style="width:100%" :show-header="false">
+                        <el-table-column prop="k" width="140"></el-table-column>
+                        <el-table-column prop="v"></el-table-column>
+                      </el-table>
+                    </div>
+                  </div>
+
+                  <div style="margin-top:10px" v-if="detail.metadataRows && detail.metadataRows.length">
+                    <div style="font-weight:600;margin-bottom:6px">文件信息</div>
+                    <el-table :data="detail.metadataRows" border size="small" style="width:100%" :show-header="false">
+                      <el-table-column prop="k" width="140"></el-table-column>
+                      <el-table-column prop="v"></el-table-column>
+                    </el-table>
+                  </div>
+
+                  <div style="margin-top:10px" v-if="detail.shaderRows && detail.shaderRows.length">
+                    <div style="font-weight:600;margin-bottom:6px">光影</div>
+                    <el-table :data="detail.shaderRows" border size="small" style="width:100%" :show-header="false">
+                      <el-table-column prop="k" width="140"></el-table-column>
+                      <el-table-column prop="v"></el-table-column>
+                    </el-table>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </el-skeleton>
+        </el-dialog>
+
+        <el-dialog v-model="shareVisible" title="分享" width="92%" top="18vh" :close-on-click-modal="false">
+          <div style="font-size:12px;color:var(--mc-text-secondary);margin-bottom:8px">选择要发送到的会话（不支持全服）</div>
+          <el-select v-model="shareTargetChatId" placeholder="选择会话" style="width:100%" filterable :loading="shareChatsLoading">
+            <el-option v-for="c in shareTargets" :key="c.id" :label="c.name" :value="c.id"></el-option>
+          </el-select>
+          <div style="margin-top:10px;font-size:12px;color:var(--mc-text-secondary)">内容：相册图片 #{{ shareSourceId }}</div>
+          <template #footer>
+            <el-button @click="shareVisible=false" :disabled="shareSending">取消</el-button>
+            <el-button type="primary" @click="confirmShare" :loading="shareSending">发送</el-button>
+          </template>
+        </el-dialog>
+      </div>
+
+      <div class="bottom-nav">
+        <a href="/m/chats.html" class="nav-item">
+          <el-icon :size="20"><chat-dot-round /></el-icon>
+          <span>会话</span>
+        </a>
+        <a href="/m/players.html" class="nav-item">
+          <el-icon :size="20"><user /></el-icon>
+          <span>玩家</span>
+        </a>
+        <a href="/m/gallery.html" class="nav-item active">
+          <el-icon :size="20"><Collection /></el-icon>
+          <span>相册</span>
+        </a>
+        <a href="/m/me.html" class="nav-item">
+          <el-icon :size="20"><tickets /></el-icon>
+          <span>工作台</span>
+        </a>
+      </div>
+    </div>
+
+    <script src="/vendor/vue/vue.global.prod.js"></script>
+    <script src="/vendor/element-plus/index.full.js"></script>
+    <script src="/vendor/element-plus-icons/icons-vue.iife.min.js"></script>
+    <script src="/m/gallery.js"></script>
+    <script>
+      document.addEventListener('gesturestart', function (e) { e.preventDefault(); }, { passive: false });
+      document.addEventListener('gesturechange', function (e) { e.preventDefault(); }, { passive: false });
+      document.addEventListener('gestureend', function (e) { e.preventDefault(); }, { passive: false });
+
+      (function () {
+        var meta = document.querySelector('meta[name="viewport"]');
+        if (!meta) return;
+        var canonical = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover';
+        function restoreViewport() {
+          try { meta.setAttribute('content', canonical); } catch (e) {}
+        }
+        function onPossibleZoomChange() {
+          restoreViewport();
+          setTimeout(restoreViewport, 50);
+          setTimeout(restoreViewport, 250);
+        }
+        document.addEventListener('focusin', function (e) {
+          var t = e && e.target;
+          if (!t) return;
+          var tag = (t.tagName || '').toUpperCase();
+          if (tag === 'INPUT' || tag === 'TEXTAREA') onPossibleZoomChange();
+        }, true);
+        document.addEventListener('focusout', function () { onPossibleZoomChange(); }, true);
+        window.addEventListener('resize', onPossibleZoomChange);
+        window.addEventListener('orientationchange', onPossibleZoomChange);
+        if (window.visualViewport) {
+          window.visualViewport.addEventListener('resize', onPossibleZoomChange);
+        }
+      })();
+    </script>
+  </body>
+</html>

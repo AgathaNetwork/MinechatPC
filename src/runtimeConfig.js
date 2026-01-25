@@ -1,0 +1,34 @@
+function normalizeBaseUrl(value) {
+  const v = String(value || '').trim();
+  if (!v) return '';
+  return v.endsWith('/') ? v.slice(0, -1) : v;
+}
+
+function getRuntimeConfig() {
+  // API base should point to the Minechat backend (not the web frontend).
+  // Configure via env vars at runtime.
+  const apiBase = normalizeBaseUrl(
+    process.env.MINECHAT_API_BASE ||
+      process.env.MINECHAT_BACKEND_BASE ||
+      process.env.MINECHAT_SERVER_BASE ||
+      'https://back-dev.agatha.org.cn'
+  );
+
+  // Optional: if you use a reverse proxy for CORS/cookies, set this separately.
+  const apiProxyBase = normalizeBaseUrl(process.env.MINECHAT_API_PROXY_BASE || '');
+
+  return {
+    apiBase,
+    apiProxyBase
+  };
+}
+
+function getWsBase() {
+  const conf = getRuntimeConfig();
+  return conf.apiProxyBase || conf.apiBase || '';
+}
+
+module.exports = {
+  getRuntimeConfig,
+  getWsBase
+};

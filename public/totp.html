@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="/theme.js"></script>
+    <title>TOTP - Minechat</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/vendor/element-plus/index.css" />
+    <link rel="stylesheet" href="/vendor/element-plus/theme-chalk/dark/css-vars.css" />
+    <style>
+      [v-cloak]{display:none}
+      .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace}
+      .wrap{word-break:break-all;overflow-wrap:anywhere}
+    </style>
+  </head>
+  <body>
+    <div id="app" v-cloak>
+      <el-container style="height:100vh">
+        <el-header style="display:flex;align-items:center;justify-content:space-between">
+          <div style="display:flex;align-items:center;gap:16px">
+            <h2 style="margin:0">TOTP 管理</h2>
+            <el-menu mode="horizontal" :ellipsis="false" default-active="totp" @select="onNav" style="border-bottom:none;background:transparent">
+              <el-menu-item index="chat">会话</el-menu-item>
+              <el-menu-item index="players">玩家</el-menu-item>
+              <el-menu-item index="gallery">相册</el-menu-item>
+              <el-menu-item index="me">工作台</el-menu-item>
+            </el-menu>
+          </div>
+          <div></div>
+        </el-header>
+
+        <el-main style="padding:12px">
+          <el-card>
+            <template #header>
+              <div style="display:flex;align-items:center;justify-content:space-between">
+                <span style="font-weight:600">TOTP（二步验证）</span>
+                <span style="font-size:12px;color:#888" v-if="loading">加载中…</span>
+              </div>
+            </template>
+
+            <el-alert v-if="!isLoggedIn" type="warning" :closable="false" show-icon title="请先登录后再管理 TOTP"></el-alert>
+
+            <div v-if="isLoggedIn" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+              <el-tag size="small" :type="enabled ? 'success' : 'info'">{{ enabled ? '已启用' : '未启用' }}</el-tag>
+              <el-button plain :loading="loading" :disabled="loading" @click="refresh">刷新状态</el-button>
+            </div>
+
+            <div v-if="isLoggedIn && lastError" style="margin-top:12px">
+              <el-alert type="error" :closable="false" show-icon title="操作失败"></el-alert>
+              <div style="margin-top:8px;font-size:12px;color:#666" class="wrap">{{ lastError }}</div>
+            </div>
+
+            <el-divider></el-divider>
+
+            <div v-if="isLoggedIn && !enabled">
+              <div style="font-size:13px;color:#666;margin-bottom:8px">
+                启用后，登录页面可使用“用户名 + TOTP”登录。请使用 Google Authenticator / Microsoft Authenticator 等 App。
+              </div>
+
+              <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                <el-button type="primary" :loading="setupStarting" :disabled="setupStarting" @click="startSetup">开始配置</el-button>
+                <el-button plain :disabled="!setupToken" @click="clearSetup">清空本次配置</el-button>
+              </div>
+
+              <div v-if="setupToken" style="margin-top:12px">
+                <el-alert type="info" :closable="false" show-icon title="请在验证器中添加账号，然后输入 6 位验证码确认"></el-alert>
+
+                <el-descriptions :column="1" border size="small" style="margin-top:10px">
+                  <el-descriptions-item label="用户名">{{ setupUsername }}</el-descriptions-item>
+                  <el-descriptions-item label="Secret">
+                    <div class="mono wrap">{{ setupSecret }}</div>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="扫码添加">
+                    <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
+                      <img v-if="qrImageUrl" :src="qrImageUrl" width="220" height="220" style="border:1px solid var(--el-border-color-lighter);border-radius:10px;background:#fff" />
+                      <div v-else style="width:220px;height:220px;display:flex;align-items:center;justify-content:center;border:1px dashed var(--el-border-color-lighter);border-radius:10px;color:#888;font-size:12px">
+                        二维码生成中…
+                      </div>
+                      <div style="font-size:12px;color:#888;max-width:260px">
+                        使用验证器扫码即可添加（推荐）。若扫码不可用，可手动复制下方 otpauth:// 或 Secret。
+                      </div>
+                    </div>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="otpauth://">
+                    <div class="mono wrap">{{ setupOtpAuthUrl }}</div>
+                  </el-descriptions-item>
+                </el-descriptions>
+
+                <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                  <el-input v-model="setupCode" placeholder="输入 6 位验证码" style="width:220px" maxlength="10" clearable></el-input>
+                  <el-button type="success" :loading="setupConfirming" :disabled="setupConfirming || !setupCode" @click="confirmSetup">确认启用</el-button>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="isLoggedIn && enabled">
+              <el-alert type="success" :closable="false" show-icon title="已启用 TOTP"></el-alert>
+              <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                <el-input v-model="disableCode" placeholder="输入当前 6 位验证码以关闭" style="width:260px" maxlength="10" clearable></el-input>
+                <el-button type="danger" :loading="disabling" :disabled="disabling || !disableCode" @click="disableTotp">关闭 TOTP</el-button>
+              </div>
+            </div>
+          </el-card>
+        </el-main>
+      </el-container>
+    </div>
+
+    <script src="/vendor/vue/vue.global.prod.js"></script>
+    <script src="/vendor/element-plus/index.full.js"></script>
+    <script src="/totp.js"></script>
+  </body>
+</html>

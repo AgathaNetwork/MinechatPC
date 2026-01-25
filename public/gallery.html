@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="/theme.js"></script>
+    <title>相册</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/vendor/element-plus/index.css" />
+    <link rel="stylesheet" href="/vendor/element-plus/theme-chalk/dark/css-vars.css" />
+    <style>
+      [v-cloak]{display:none}
+      .g-item{display:flex;gap:12px;align-items:flex-start}
+      .g-thumb{width:120px;height:84px;flex:0 0 auto;border-radius:6px;overflow:hidden;background:var(--el-fill-color-lighter);border:1px solid var(--el-border-color-lighter)}
+      .g-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+      .g-title{font-weight:600;line-height:1.3}
+      .g-sub{font-size:12px;color:var(--mc-text-secondary);line-height:1.5}
+      .g-tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+      .g-desc{margin-top:6px;font-size:13px;color:var(--mc-text-regular);line-height:1.5;word-break:break-word}
+      .g-list{display:flex;flex-direction:column;gap:10px}
+      .g-filters{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+      .g-filters .el-input,.g-filters .el-select{width:180px}
+      .g-filters .el-input.g-q{width:260px}
+      .g-detail-img{width:100%;max-height:60vh;object-fit:contain;background:var(--el-fill-color-lighter);border-radius:8px;border:1px solid var(--el-border-color-lighter)}
+
+      /* Upload dialog: force vertical form layout (avoid inline/wrap rendering issues) */
+      .mc-upload-dialog .mc-upload-form{display:flex;flex-direction:column}
+      .mc-upload-dialog .mc-upload-form .el-form-item{width:100%;margin-right:0}
+      .mc-upload-dialog .mc-upload-form .el-form-item__content{flex:1 1 auto;min-width:0}
+      .mc-upload-dialog .mc-upload-form .el-divider--horizontal{width:100%}
+      .mc-upload-dialog .mc-upload-form .el-upload{width:100%}
+      .mc-upload-dialog .mc-upload-form .el-upload-dragger{width:100%}
+    </style>
+  </head>
+  <body>
+    <div id="app" v-cloak>
+      <el-container style="height:100vh">
+        <el-header style="display:flex;align-items:center;justify-content:space-between">
+          <div style="display:flex;align-items:center;gap:16px">
+            <h2 style="margin:0">相册</h2>
+            <el-menu mode="horizontal" :ellipsis="false" default-active="gallery" @select="onNav" style="border-bottom:none;background:transparent">
+              <el-menu-item index="chat">会话</el-menu-item>
+              <el-menu-item index="players">玩家</el-menu-item>
+              <el-menu-item index="gallery">相册</el-menu-item>
+              <el-menu-item index="me">工作台</el-menu-item>
+            </el-menu>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+          </div>
+        </el-header>
+
+        <el-main style="padding:12px">
+          <el-card>
+            <template #header>
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+                <div class="g-filters">
+                  <el-input v-model="year" placeholder="年份（如 2025）" clearable></el-input>
+                  <el-select v-model="world" placeholder="世界" clearable>
+                    <el-option v-for="w in worldOptions" :key="w.value" :label="w.label" :value="w.value"></el-option>
+                  </el-select>
+                  <el-select v-model="type" placeholder="类型" clearable>
+                    <el-option v-for="t in typeOptions" :key="t.value" :label="t.label" :value="t.value"></el-option>
+                  </el-select>
+                  <el-input class="g-q" v-model="q" placeholder="按名称搜索" clearable @keyup.enter="applyFilters"></el-input>
+                  <el-button plain :loading="loading" @click="applyFilters">筛选</el-button>
+                  <el-button plain :disabled="loading" @click="resetFilters">重置</el-button>
+                  <el-button plain type="primary" @click="openUpload">
+                    <el-icon><upload /></el-icon>
+                    上传
+                  </el-button>
+                </div>
+                <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                  <span style="font-size:12px;color:#888" v-if="loading">加载中…</span>
+                </div>
+              </div>
+            </template>
+
+            <div style="margin-top:12px" v-if="loadError">
+              <el-alert type="error" :closable="false" show-icon title="加载失败"></el-alert>
+              <div style="margin-top:8px;font-size:12px;color:#666;word-break:break-all">{{ loadError }}</div>
+            </div>
+
+            <div style="margin-top:12px" class="g-list">
+              <el-skeleton animated :loading="loading && items.length===0">
+                <template #template>
+                  <el-card v-for="i in 5" :key="i" :body-style="{ padding: '12px' }">
+                    <div class="g-item">
+                      <el-skeleton-item variant="rect" style="width:120px;height:84px;border-radius:6px"></el-skeleton-item>
+                      <div style="flex:1;min-width:0">
+                        <el-skeleton-item variant="text" style="width:50%"></el-skeleton-item>
+                        <el-skeleton-item variant="text" style="width:70%;margin-top:10px"></el-skeleton-item>
+                        <el-skeleton-item variant="text" style="width:40%;margin-top:10px"></el-skeleton-item>
+                      </div>
+                    </div>
+                  </el-card>
+                </template>
+                <template #default>
+                  <el-card v-for="it in items" :key="it.id" :body-style="{ padding: '12px' }" @click="openDetail(it)" style="cursor:pointer">
+                    <div class="g-item">
+                      <div class="g-thumb">
+                        <img v-if="it.thumbUrl" :src="it.thumbUrl" alt="thumb" />
+                      </div>
+                      <div style="flex:1;min-width:0">
+                        <div class="g-title" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ it.name || ('#'+it.id) }}</div>
+                        <div class="g-sub">{{ it.uploaderText }} · {{ it.timeText }}</div>
+                        <div class="g-tags">
+                          <el-tag size="small" effect="plain" @click.stop="setYear(it.year)">{{ it.year || '-' }}</el-tag>
+                          <el-tag size="small" effect="plain" @click.stop="setWorld(it.world)">{{ it.worldName }}</el-tag>
+                          <el-tag size="small" effect="plain" @click.stop="setType(it.type)">{{ it.typeName }}</el-tag>
+                        </div>
+                        <div class="g-desc" v-if="it.annotation">{{ it.annotation }}</div>
+                      </div>
+                    </div>
+                  </el-card>
+
+                  <div style="display:flex;justify-content:center;margin-top:10px">
+                    <el-button plain :loading="loadingMore" :disabled="loading || loadingMore || noMore" @click="loadMore">
+                      {{ noMore ? '没有更多了' : '加载更多' }}
+                    </el-button>
+                  </div>
+                </template>
+              </el-skeleton>
+            </div>
+          </el-card>
+
+          <el-dialog v-model="detailVisible" title="图片详情" width="860px">
+            <el-skeleton :loading="detailLoading" animated>
+              <template #template>
+                <el-skeleton-item variant="rect" style="width:100%;height:360px;border-radius:8px"></el-skeleton-item>
+                <el-skeleton-item variant="text" style="width:40%;margin-top:12px"></el-skeleton-item>
+                <el-skeleton-item variant="text" style="width:70%;margin-top:10px"></el-skeleton-item>
+              </template>
+              <template #default>
+                <div v-if="detailError" style="margin-bottom:12px">
+                  <el-alert type="error" :closable="false" show-icon title="加载失败"></el-alert>
+                  <div style="margin-top:8px;font-size:12px;color:#666;word-break:break-all">{{ detailError }}</div>
+                </div>
+
+                <div v-if="detail">
+                  <img v-if="detail.imageUrl" class="g-detail-img" :src="detail.imageUrl" alt="image" />
+
+                  <div style="margin-top:12px">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                      <div style="font-weight:600;font-size:16px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ detail.name || ('#'+detail.id) }}</div>
+                      <el-button plain size="small" @click.stop="openShare(detail.id)">分享</el-button>
+                    </div>
+                    <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
+                      <el-tag size="small" effect="plain">{{ detail.year || '-' }}</el-tag>
+                      <el-tag size="small" effect="plain">{{ detail.worldName }}</el-tag>
+                      <el-tag size="small" effect="plain">{{ detail.typeName }}</el-tag>
+                      <el-tag size="small" type="info" effect="plain" v-if="detail.uploader">{{ detail.uploader }}</el-tag>
+                    </div>
+                    <div v-if="detail.annotation" style="margin-top:8px;white-space:pre-wrap;word-break:break-word">{{ detail.annotation }}</div>
+
+                    <el-divider v-if="detail.players && detail.players.length" style="margin:14px 0 10px"></el-divider>
+                    <div style="margin-top:10px" v-if="detail.players && detail.players.length">
+                      <div style="font-weight:600;margin-bottom:6px">参与者</div>
+                      <div style="display:flex;gap:6px;flex-wrap:wrap">
+                        <el-tag v-for="p in detail.players" :key="p" size="small" effect="plain">{{ p }}</el-tag>
+                      </div>
+                    </div>
+
+                    <div style="margin-top:10px" v-if="(detail.position && detail.position.mapUrl) || (detail.positionRows && detail.positionRows.length)">
+                      <el-button
+                        v-if="detail.position && detail.position.mapUrl"
+                        circle
+                        size="small"
+                        type="default"
+                        title="在地图中打开"
+                        @click="openDetailOnMap"
+                      >
+                        <el-icon><location /></el-icon>
+                      </el-button>
+                      <div style="margin-top:8px" v-if="detail.positionRows && detail.positionRows.length">
+                        <el-table :data="detail.positionRows" border size="small" style="width:100%" :show-header="false">
+                          <el-table-column prop="k" width="160"></el-table-column>
+                          <el-table-column prop="v"></el-table-column>
+                        </el-table>
+                      </div>
+                    </div>
+
+                    <div style="margin-top:10px" v-if="detail.metadataRows && detail.metadataRows.length">
+                      <div style="font-weight:600;margin-bottom:6px">文件信息</div>
+                      <el-table :data="detail.metadataRows" border size="small" style="width:100%" :show-header="false">
+                        <el-table-column prop="k" width="160"></el-table-column>
+                        <el-table-column prop="v"></el-table-column>
+                      </el-table>
+                    </div>
+
+                    <div style="margin-top:10px" v-if="detail.shaderRows && detail.shaderRows.length">
+                      <div style="font-weight:600;margin-bottom:6px">光影</div>
+                      <el-table :data="detail.shaderRows" border size="small" style="width:100%" :show-header="false">
+                        <el-table-column prop="k" width="160"></el-table-column>
+                        <el-table-column prop="v"></el-table-column>
+                      </el-table>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </el-skeleton>
+          </el-dialog>
+
+          <el-dialog v-model="shareVisible" title="分享" width="520px" :close-on-click-modal="false">
+            <div style="font-size:12px;color:var(--mc-text-secondary);margin-bottom:8px">选择要发送到的会话（不支持全服）</div>
+            <el-select v-model="shareTargetChatId" placeholder="选择会话" style="width:100%" filterable :loading="shareChatsLoading">
+              <el-option v-for="c in shareTargets" :key="c.id" :label="c.name" :value="c.id" />
+            </el-select>
+            <div style="margin-top:10px;font-size:12px;color:var(--mc-text-secondary)">内容：相册图片 #{{ shareSourceId }}</div>
+            <template #footer>
+              <el-button @click="shareVisible=false" :disabled="shareSending">取消</el-button>
+              <el-button type="primary" @click="confirmShare" :loading="shareSending">发送</el-button>
+            </template>
+          </el-dialog>
+
+          <el-dialog v-model="uploadVisible" class="mc-upload-dialog" title="手动上传图片" width="760px" @closed="onUploadClosed">
+            <el-alert
+              v-if="uploadError"
+              type="error"
+              :closable="false"
+              show-icon
+              title="上传失败"
+              style="margin-bottom:12px"
+            >
+              <template #default>
+                <div style="word-break:break-all">{{ uploadError }}</div>
+              </template>
+            </el-alert>
+
+            <el-form class="mc-upload-form" label-width="96px" :model="uploadForm">
+              <el-form-item label="PNG 文件">
+                <el-upload
+                  drag
+                  :auto-upload="false"
+                  :limit="1"
+                  accept="image/png"
+                  :on-change="onUploadFileChange"
+                  :on-remove="onUploadFileRemove"
+                  :file-list="uploadFileList"
+                >
+                  <el-icon><upload-filled /></el-icon>
+                  <div class="el-upload__text">拖拽到此处，或 <em>点击选择</em></div>
+                  <template #tip>
+                    <div class="el-upload__tip">仅支持 PNG</div>
+                  </template>
+                </el-upload>
+              </el-form-item>
+
+              <el-divider style="margin:12px 0"></el-divider>
+
+              <el-form-item label="用户名">
+                <el-input v-model="uploadForm.username" disabled placeholder="请先登录"></el-input>
+              </el-form-item>
+
+              <el-form-item label="世界">
+                <el-select v-model="uploadForm.world" placeholder="请选择" filterable style="width:100%" :disabled="!(uploadFileList && uploadFileList.length)">
+                  <el-option v-for="w in worldOptions" :key="w.value" :label="w.label" :value="w.value"></el-option>
+                </el-select>
+              </el-form-item>
+              <el-form-item label="类型">
+                <el-select v-model="uploadForm.type" placeholder="请选择" filterable style="width:100%" :disabled="!(uploadFileList && uploadFileList.length)">
+                  <el-option v-for="t in typeOptions" :key="t.value" :label="t.label" :value="t.value"></el-option>
+                </el-select>
+              </el-form-item>
+              <el-form-item label="年份">
+                <el-input v-model="uploadForm.year" disabled></el-input>
+              </el-form-item>
+              <el-form-item label="图片名">
+                <el-input v-model="uploadForm.name" placeholder="请输入图片名称" :disabled="!(uploadFileList && uploadFileList.length)"></el-input>
+              </el-form-item>
+              <el-form-item label="描述">
+                <el-input v-model="uploadForm.annotation" type="textarea" :rows="3" placeholder="请输入图片描述" :disabled="!(uploadFileList && uploadFileList.length)"></el-input>
+              </el-form-item>
+
+              <el-form-item label="光影名">
+                <el-input v-model="uploadForm.shaderName" placeholder="可选" :disabled="!(uploadFileList && uploadFileList.length)"></el-input>
+              </el-form-item>
+              <el-form-item label="光影配置">
+                <el-input v-model="uploadForm.shaderPreset" placeholder="可选" :disabled="!(uploadFileList && uploadFileList.length)"></el-input>
+              </el-form-item>
+
+              <el-form-item label="参与者">
+                <el-select
+                  v-model="uploadForm.playersSelected"
+                  multiple
+                  filterable
+                  collapse-tags
+                  collapse-tags-tooltip
+                  :max-collapse-tags="5"
+                  placeholder="可选：选择参与者（可搜索）"
+                  style="width:100%"
+                  :disabled="!(uploadFileList && uploadFileList.length)"
+                  :loading="uploadUsersLoading"
+                >
+                  <el-option v-for="u in uploadUserOptions" :key="u.value" :label="u.label" :value="u.value"></el-option>
+                </el-select>
+              </el-form-item>
+
+              <el-form-item label="包含坐标">
+                <el-switch v-model="uploadForm.hasPosition" :disabled="!(uploadFileList && uploadFileList.length)"></el-switch>
+              </el-form-item>
+
+              <template v-if="uploadForm.hasPosition">
+                <el-form-item label="坐标世界">
+                  <el-select v-model="uploadForm.posWorld" placeholder="请选择" style="width:100%" :disabled="!(uploadFileList && uploadFileList.length)">
+                    <el-option label="主世界" value="world"></el-option>
+                    <el-option label="下界" value="world_nether"></el-option>
+                    <el-option label="末地" value="world_the_end"></el-option>
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="X / Y / Z">
+                  <div style="display:flex;gap:8px;width:100%">
+                    <el-input v-model="uploadForm.posX" placeholder="X" :disabled="!(uploadFileList && uploadFileList.length)"></el-input>
+                    <el-input v-model="uploadForm.posY" placeholder="Y" :disabled="!(uploadFileList && uploadFileList.length)"></el-input>
+                    <el-input v-model="uploadForm.posZ" placeholder="Z" :disabled="!(uploadFileList && uploadFileList.length)"></el-input>
+                  </div>
+                </el-form-item>
+              </template>
+
+              <el-form-item label="文件信息" v-if="uploadForm.metaReady">
+                <el-descriptions :column="3" size="small" border style="width:100%">
+                  <el-descriptions-item label="文件名">{{ uploadForm.meta.name }}</el-descriptions-item>
+                  <el-descriptions-item label="大小(KB)">{{ uploadForm.meta.size }}</el-descriptions-item>
+                  <el-descriptions-item label="分辨率">{{ uploadForm.meta.w }}×{{ uploadForm.meta.h }}</el-descriptions-item>
+                </el-descriptions>
+              </el-form-item>
+            </el-form>
+
+            <template #footer>
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+                <div style="font-size:12px;color:#888" v-if="uploading">{{ uploadStepText }}</div>
+                <div style="display:flex;gap:8px">
+                  <el-button plain :disabled="uploading" @click="uploadVisible=false">取消</el-button>
+                  <el-button type="primary" :loading="uploading" @click="submitUpload">开始上传</el-button>
+                </div>
+              </div>
+            </template>
+          </el-dialog>
+        </el-main>
+      </el-container>
+    </div>
+
+    <script src="/vendor/vue/vue.global.prod.js"></script>
+    <script src="/vendor/element-plus/index.full.js"></script>
+    <script src="/vendor/element-plus-icons/icons-vue.iife.min.js"></script>
+    <script src="/gallery.js"></script>
+  </body>
+</html>

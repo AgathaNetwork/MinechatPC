@@ -1,0 +1,62 @@
+*{box-sizing:border-box;font-family:Arial,Helvetica,sans-serif}
+html, body{height:100%}
+
+/*
+	Theme tokens: prefer Element Plus CSS variables so light/dark is consistent.
+	Dark mode variables come from: element-plus/theme-chalk/dark/css-vars.css
+	and are enabled by adding `dark` class on <html>.
+*/
+:root{
+	--mc-body-bg: var(--el-bg-color-page, #f6f8fa);
+	--mc-surface: var(--el-bg-color, #fff);
+	--mc-border: var(--el-border-color, #e6e6e6);
+	--mc-text: var(--el-text-color-primary, #111);
+	--mc-text-regular: var(--el-text-color-regular, #666);
+	--mc-text-secondary: var(--el-text-color-secondary, #888);
+	--mc-link: var(--el-color-primary, #0366d6);
+	--mc-active-bg: var(--el-color-primary-light-9, #eef6ff);
+}
+
+body{margin:0;background:var(--mc-body-bg) !important;color:var(--mc-text) !important}
+.app{max-width:1100px;margin:0 auto;height:100vh;display:flex;flex-direction:column}
+header{display:flex;justify-content:space-between;align-items:center;padding:12px 8px;background:var(--mc-surface);border-bottom:1px solid var(--mc-border)}
+.brand{display:flex;align-items:center;gap:16px}
+.nav-links a{margin-right:12px;color:var(--mc-link);text-decoration:none;padding:6px 8px;border-radius:4px}
+.nav-links a.active{background:var(--mc-active-bg);font-weight:600}
+main{display:flex;flex:1;min-height:0}
+aside#chats{width:280px;border-right:1px solid var(--mc-border);padding:12px;background:var(--mc-surface)}
+section#conversation{flex:1;display:flex;flex-direction:column;min-height:0;position:relative}
+#messages{flex:1;padding:12px;overflow:auto;min-height:0}
+.msg{padding:6px 8px;margin-bottom:6px;background:var(--mc-surface);border-radius:6px;border:1px solid var(--mc-border)}
+#sendForm{display:flex;padding:12px;background:var(--mc-surface);border-top:1px solid var(--mc-border)}
+#msgInput{flex:1;padding:8px;margin-right:8px}
+.modal{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.4)}
+.card{background:var(--mc-surface);padding:16px;border-radius:8px;max-width:600px;width:90%}
+
+/* Mobile shared layout helpers (used in /public/m/* pages) */
+.top-bar{background:var(--mc-surface) !important;border-bottom-color:var(--mc-border) !important}
+.bottom-nav{background:var(--mc-surface) !important;border-top-color:var(--mc-border) !important}
+.nav-item{color:var(--mc-text-regular) !important}
+.nav-item.active{color:var(--el-color-primary, #409eff) !important}
+
+/* Dark mode: gently neutralize common inline hard-coded colors */
+html.dark [style*="color:#888"],html.dark [style*="color: #888"]{color:var(--mc-text-secondary) !important}
+html.dark [style*="color:#666"],html.dark [style*="color: #666"]{color:var(--mc-text-regular) !important}
+html.dark [style*="color:#444"],html.dark [style*="color: #444"]{color:var(--mc-text-regular) !important}
+html.dark [style*="color:#111"],html.dark [style*="color: #111"]{color:var(--mc-text) !important}
+
+html.dark [style*="background:#fff"],html.dark [style*="background: #fff"]{background:var(--mc-surface) !important}
+html.dark [style*="background:#f5f5f5"],html.dark [style*="background: #f5f5f5"],
+html.dark [style*="background:#f6f8fa"],html.dark [style*="background: #f6f8fa"]{background:var(--mc-body-bg) !important}
+html.dark [style*="background:#eef6ff"],html.dark [style*="background: #eef6ff"]{background:var(--mc-active-bg) !important}
+
+html.dark [style*="#e6e6e6"],html.dark [style*="#eee"],html.dark [style*="#ddd"],html.dark [style*="#dcdfe6"]{border-color:var(--mc-border) !important}
+
+/* Mobile: avoid status-bar overlap for top toasts/notifications (Element Plus)
+	Pages that reserve a 4vh status-bar spacer include a `.top-spacer` element.
+	Element Plus appends messages to <body>, so sibling selector is reliable here. */
+.top-spacer ~ .el-message{top:calc(4vh + 16px) !important}
+.top-spacer ~ .el-notification{top:calc(4vh + 16px) !important}
+
+/* Text helpers */
+.mc-ellipsis{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

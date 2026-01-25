@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="/theme.js"></script>
+    <title>大地图 - Minechat</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/vendor/element-plus/index.css" />
+    <link rel="stylesheet" href="/vendor/element-plus/theme-chalk/dark/css-vars.css" />
+    <style>
+      [v-cloak]{display:none}
+      html, body { height: 100%; margin: 0; overflow: hidden; background: var(--mc-body-bg); }
+      .frame-wrap {
+        width: 100%;
+        height: 100%;
+        background: var(--mc-surface);
+        border: 1px solid var(--mc-border);
+        border-radius: 12px;
+        overflow: hidden;
+      }
+      iframe { width: 100%; height: 100%; border: 0; display: block; }
+    </style>
+  </head>
+  <body>
+    <div id="app" v-cloak>
+      <el-container style="height:100vh">
+        <el-header style="display:flex;align-items:center;justify-content:space-between">
+          <div style="display:flex;align-items:center;gap:16px">
+            <div style="display:flex;align-items:center;gap:6px">
+              <h2 style="margin:0">大地图</h2>
+            </div>
+            <el-menu mode="horizontal" :ellipsis="false" default-active="" @select="onNav" style="border-bottom:none;background:transparent">
+              <el-menu-item index="chat">会话</el-menu-item>
+              <el-menu-item index="players">玩家</el-menu-item>
+              <el-menu-item index="gallery">相册</el-menu-item>
+              <el-menu-item index="me">工作台</el-menu-item>
+            </el-menu>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px"></div>
+        </el-header>
+        <el-main style="padding:12px">
+          <div class="frame-wrap">
+            <iframe :src="frameSrc" referrerpolicy="no-referrer-when-downgrade" allowfullscreen></iframe>
+          </div>
+        </el-main>
+      </el-container>
+    </div>
+
+    <script src="/vendor/vue/vue.global.prod.js"></script>
+    <script src="/vendor/element-plus/index.full.js"></script>
+    <script src="/vendor/element-plus-icons/icons-vue.iife.min.js"></script>
+    <script>
+      const { createApp } = Vue;
+
+      const app = createApp({
+        data() {
+          return {
+            frameSrc: 'https://map.agatha.org.cn/',
+          };
+        },
+        created() {
+          this.frameSrc = this.computeFrameSrc();
+        },
+        methods: {
+          computeFrameSrc() {
+            try {
+              const sp = new URLSearchParams(window.location.search || '');
+              const rawHash = String(sp.get('hash') || '').trim();
+              if (rawHash) return 'https://map.agatha.org.cn/#' + rawHash.replace(/^#/, '');
+
+              const world = String(sp.get('world') || '').trim();
+              if (!world) return 'https://map.agatha.org.cn/';
+              const x = Number(sp.get('x'));
+              const y = Number(sp.get('y'));
+              const z = Number(sp.get('z'));
+              if (!Number.isFinite(x) || !Number.isFinite(z)) return 'https://map.agatha.org.cn/';
+              const yy = Number.isFinite(y) ? y : 0;
+              const hash =
+                encodeURIComponent(world) +
+                ':' +
+                encodeURIComponent(Math.round(x)) +
+                ':' +
+                encodeURIComponent(Math.round(yy)) +
+                ':' +
+                encodeURIComponent(Math.round(z)) +
+                ':1500:0:0:0:0:perspective';
+              return 'https://map.agatha.org.cn/#' + hash;
+            } catch (e) {
+              return 'https://map.agatha.org.cn/';
+            }
+          },
+          onNav(key) {
+            if (key === 'chat') window.location.href = '/chat.html';
+            else if (key === 'gallery') window.location.href = '/gallery.html';
+            else if (key === 'players') window.location.href = '/players.html';
+            else if (key === 'me') window.location.href = '/me.html';
+          },
+        },
+      });
+
+      try {
+        const icons = window.ElementPlusIconsVue;
+        if (icons && typeof icons === 'object') {
+          for (const [key, component] of Object.entries(icons)) {
+            app.component(key, component);
+          }
+        }
+      } catch (e) {}
+
+      app.use(ElementPlus).mount('#app');
+    </script>
+  </body>
+</html>

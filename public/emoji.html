@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="/theme.js"></script>
+    <title>表情包管理</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/vendor/element-plus/index.css" />
+    <link rel="stylesheet" href="/vendor/element-plus/theme-chalk/dark/css-vars.css" />
+  </head>
+  <body>
+    <div id="app">
+      <el-container style="height:100vh">
+        <el-header style="display:flex;align-items:center;justify-content:space-between">
+          <div style="display:flex;align-items:center;gap:16px">
+            <h2 style="margin:0">表情包</h2>
+            <el-menu mode="horizontal" :ellipsis="false" default-active="" @select="onNav" style="border-bottom:none;background:transparent">
+              <el-menu-item index="chat">会话</el-menu-item>
+              <el-menu-item index="players">玩家</el-menu-item>
+              <el-menu-item index="gallery">相册</el-menu-item>
+              <el-menu-item index="me">工作台</el-menu-item>
+            </el-menu>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+          </div>
+        </el-header>
+        <el-main style="padding:12px">
+          <el-form @submit.native.prevent="upload">
+            <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
+              <div style="flex:1;min-width:220px">
+                <el-form-item style="margin-bottom:0">
+                  <el-input v-model="name" placeholder="名称（可选）"></el-input>
+                </el-form-item>
+              </div>
+              <div style="width:280px;max-width:100%">
+                <el-form-item style="margin-bottom:0">
+                  <el-upload
+                    :auto-upload="false"
+                    :limit="1"
+                    accept="image/*"
+                    :file-list="uploadFiles"
+                    @change="onUploadChange"
+                    @remove="onUploadRemove"
+                    @exceed="onUploadExceed"
+                  >
+                    <el-button type="default">选择文件</el-button>
+                  </el-upload>
+                </el-form-item>
+              </div>
+              <div>
+                <el-form-item style="margin-bottom:0">
+                  <el-button type="primary" :disabled="!selectedFile" @click="upload">上传</el-button>
+                </el-form-item>
+              </div>
+            </div>
+          </el-form>
+
+          <el-divider></el-divider>
+          <div style="display:flex;flex-wrap:wrap;gap:12px">
+            <div v-for="p in packs" :key="p.id" style="width:160px;text-align:center;border:1px solid #eee;padding:8px;border-radius:6px">
+              <img :src="p.url" style="max-width:100%;height:80px;object-fit:contain" />
+              <div class="mc-ellipsis" :title="p.name || p.id" style="margin-top:8px">{{ p.name || p.id }}</div>
+              <el-button type="danger" size="mini" @click="del(p.id)" style="margin-top:6px">删除</el-button>
+            </div>
+          </div>
+        </el-main>
+      </el-container>
+    </div>
+
+    <script src="/vendor/vue/vue.global.prod.js"></script>
+    <script src="/vendor/element-plus/index.full.js"></script>
+    <script src="/emoji.js"></script>
+  </body>
+</html>

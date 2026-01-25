@@ -1,0 +1,675 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="/theme.js"></script>
+    <title>Minechat</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/vendor/element-plus/index.css" />
+    <link rel="stylesheet" href="/vendor/element-plus/theme-chalk/dark/css-vars.css" />
+    <style>
+      [v-cloak]{display:none}
+      .msg-row{width:100%}
+      .msg-time{opacity:0;transition:opacity .12s ease;font-size:12px;color:var(--mc-text-secondary);user-select:none;white-space:nowrap}
+      .msg-row:hover .msg-time{opacity:1}
+      .time-divider{display:flex;align-items:center;justify-content:center;margin:10px 0;color:var(--mc-text-secondary);font-size:12px;user-select:none}
+      .time-divider:before,.time-divider:after{content:'';flex:1;border-top:1px solid var(--mc-border)}
+      .time-divider-text{padding:0 10px;white-space:nowrap;background:var(--mc-surface)}
+      .chat-preview{display:inline-flex;align-items:center;gap:6px;min-width:0}
+      .chat-preview-suffix{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .el-tag.chat-preview-tag-tight{--el-tag-height:16px;height:16px !important;line-height:16px !important;padding:0 6px !important;font-size:11px !important}
+      .img-preview-mask{position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:99999;padding:16px}
+      .img-preview-img{max-width:95vw;max-height:95vh;object-fit:contain;border-radius:8px;background:var(--mc-surface);touch-action:none;user-select:none;cursor:grab;transform-origin:0 0}
+      .img-preview-img.dragging{cursor:grabbing}
+      .video-preview-video{max-width:95vw;max-height:95vh;border-radius:8px;background:var(--mc-surface)}
+      .loading-spinner{width:40px;height:40px;border:4px solid var(--mc-border);border-top:4px solid var(--el-color-primary, #409eff);border-radius:50%;animation:spin 1s linear infinite;margin:0 auto}
+      @keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+
+      .mc-rich-input{flex:1;min-width:0;min-height:32px;box-sizing:border-box;border:1px solid var(--el-border-color);border-radius:var(--el-border-radius-base);padding:5px 10px;line-height:22px;background:var(--el-fill-color-blank);color:var(--el-text-color-primary);outline:none;display:block;word-break:break-word;white-space:pre-wrap}
+      .mc-rich-input:focus{border-color:var(--el-color-primary)}
+      .mc-rich-input:empty:before{content:attr(data-placeholder);color:var(--el-text-color-placeholder);pointer-events:none}
+      .mc-rich-input .mc-mention-chip{cursor:default;display:inline-flex;align-items:center;vertical-align:middle;max-width:100%;padding:0 8px;height:24px;line-height:24px;border-radius:var(--el-border-radius-base);border:1px solid var(--el-color-primary-light-7);background:var(--el-color-primary-light-9);color:var(--el-color-primary);user-select:none;white-space:nowrap;margin:0 6px 2px 0}
+      .mc-rich-input .mc-mention-chip::selection{background:transparent}
+    </style>
+  </head>
+  <body>
+    <div id="app" v-cloak>
+      <el-container style="height:100vh">
+        <el-header style="display:flex;align-items:center;justify-content:space-between">
+          <div style="display:flex;align-items:center;gap:16px">
+            <h2 style="margin:0">会话</h2>
+            <el-menu mode="horizontal" :ellipsis="false" default-active="chat" @select="onNav" style="border-bottom:none;background:transparent">
+              <el-menu-item index="chat">会话</el-menu-item>
+              <el-menu-item index="players">玩家</el-menu-item>
+              <el-menu-item index="gallery">相册</el-menu-item>
+              <el-menu-item index="me">工作台</el-menu-item>
+            </el-menu>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+          </div>
+        </el-header>
+
+        <el-container style="min-height:0">
+          <el-aside width="280px" style="border-right:1px solid var(--mc-border);background:var(--mc-surface);padding:12px;overflow:auto">
+            <div>
+              <h3 style="margin:0 0 8px 0">全服聊天</h3>
+              <div @click="openGlobal" :style="{cursor:'pointer',padding:'8px',borderRadius:'6px',background: currentChatId==='global' ? 'var(--mc-active-bg)' : 'transparent'}">
+                <div style="display:flex;align-items:center;gap:10px">
+                  <el-avatar shape="square" src="/img/Ag_0404.png" :size="40"></el-avatar>
+                  <div style="font-weight:500">全服</div>
+                </div>
+              </div>
+            </div>
+            <div style="margin-top:12px">
+              <h3 style="margin:0 0 8px 0">会话</h3>
+              <el-skeleton animated :loading="chatsLoading && (!chats || chats.length === 0)">
+                <template #template>
+                  <div v-for="i in 6" :key="i" :style="{padding:'8px',borderRadius:'6px',marginBottom:'6px'}">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                      <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
+                        <el-skeleton-item variant="rect" style="width:40px;height:40px;border-radius:4px;flex-shrink:0"></el-skeleton-item>
+                        <div style="flex:1;min-width:0">
+                          <el-skeleton-item variant="text" style="width:140px"></el-skeleton-item>
+                          <div style="margin-top:8px">
+                            <el-skeleton-item variant="text" style="width:220px"></el-skeleton-item>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+                <template #default>
+                  <div v-for="c in chats" :key="c.id" @click="onChatClick(c)"
+                      :style="{cursor:'pointer',padding:'8px',borderRadius:'6px',marginBottom:'6px',background: currentChatId===c.id ? 'var(--mc-active-bg)' : 'transparent',position:'relative'}">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                      <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
+                        <div style="position:relative;width:40px;height:40px;flex-shrink:0">
+                          <el-avatar v-if="getChatAvatar(c)" shape="square" :src="getChatAvatar(c)" :size="40"></el-avatar>
+                          <el-avatar v-else shape="square" :size="40">{{ getChatInitial(c) }}</el-avatar>
+                          <span
+                            v-if="isChatPeerOnline(c)"
+                            style="position:absolute;right:-1px;bottom:-1px;width:10px;height:10px;border-radius:50%;background:#1890ff;border:2px solid var(--mc-surface)"
+                          ></span>
+                        </div>
+                        <div style="flex:1;min-width:0">
+                          <div style="font-weight:500;margin-bottom:4px">{{ getChatName(c) }}</div>
+                          <div style="font-size:12px;color:var(--mc-text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                            <template v-if="isGroupChatItem(c)">
+                              <span class="chat-preview">
+                                <el-tag
+                                  v-if="lastMessageSenderBadge(c)"
+                                  type="info"
+                                  effect="plain"
+                                  size="small"
+                                  class="chat-preview-tag-tight"
+                                >{{ lastMessageSenderBadge(c) }}</el-tag>
+
+                                <template v-if="lastMessagePreviewTag(c)">
+                                  <el-tag
+                                    type="info"
+                                    effect="plain"
+                                    size="small"
+                                    :class="{ 'chat-preview-tag-tight': !!lastMessagePreviewSuffix(c) || lastMessagePreviewTag(c)==='已撤回' }"
+                                  >{{ lastMessagePreviewTag(c) }}</el-tag>
+                                  <span v-if="lastMessagePreviewSuffix(c)" class="chat-preview-suffix">{{ lastMessagePreviewSuffix(c) }}</span>
+                                </template>
+                                <template v-else>
+                                  <span class="chat-preview-suffix">{{ formatLastMessage(c) }}</span>
+                                </template>
+                              </span>
+                            </template>
+                            <template v-else>
+                              <template v-if="lastMessagePreviewTag(c)">
+                                <span class="chat-preview">
+                                  <el-tag
+                                    type="info"
+                                    effect="plain"
+                                    size="small"
+                                    :class="{ 'chat-preview-tag-tight': !!lastMessagePreviewSuffix(c) || lastMessagePreviewTag(c)==='已撤回' }"
+                                  >{{ lastMessagePreviewTag(c) }}</el-tag>
+                                  <span v-if="lastMessagePreviewSuffix(c)" class="chat-preview-suffix">{{ lastMessagePreviewSuffix(c) }}</span>
+                                </span>
+                              </template>
+                              <template v-else>
+                                {{ formatLastMessage(c) }}
+                              </template>
+                            </template>
+                          </div>
+                        </div>
+                      </div>
+                      <div v-if="hasUnread(c.id)" style="width:8px;height:8px;border-radius:50%;background:#1890ff;flex-shrink:0"></div>
+                    </div>
+                  </div>
+                </template>
+              </el-skeleton>
+            </div>
+          </el-aside>
+
+          <el-main style="padding:12px;display:flex;flex-direction:column;min-height:0;height:100%">
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <div style="display:flex;align-items:center;gap:8px">
+                <el-avatar v-if="currentChatFaceUrl" shape="square" :src="currentChatFaceUrl" :size="32"></el-avatar>
+                <h3 style="margin:0">{{ currentChatTitle }}</h3>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px">
+                <el-popover v-if="isGroupChat" placement="bottom-end" trigger="hover" :width="220">
+                  <template #reference>
+                    <el-button circle size="small" type="default" title="群聊管理">
+                      <el-icon><more-filled /></el-icon>
+                    </el-button>
+                  </template>
+                  <div style="display:flex;flex-direction:column;gap:8px">
+                    <el-button size="small" type="primary" plain @click="openGroupManage">群聊管理</el-button>
+                    <div style="font-size:12px;color:var(--mc-text-secondary)">鼠标悬停此处打开入口</div>
+                  </div>
+                </el-popover>
+              </div>
+            </div>
+
+            <div style="flex:1;min-height:0;margin-top:12px;position:relative">
+              <div v-if="imagePreviewVisible" class="img-preview-mask" @click="requestCloseImagePreview">
+                <img
+                  :src="imagePreviewUrl"
+                  class="img-preview-img"
+                  :class="{ dragging: imagePreviewDragging }"
+                  :style="imagePreviewStyle"
+                  @click.stop="requestCloseImagePreview"
+                  @wheel.prevent="onImagePreviewWheel"
+                  @mousedown.prevent="onImagePreviewMouseDown"
+                />
+              </div>
+              <div v-if="videoPreviewVisible" class="img-preview-mask" @click="requestCloseVideoPreview">
+                <video
+                  :src="videoPreviewUrl"
+                  class="video-preview-video"
+                  controls
+                  autoplay
+                  playsinline
+                  @click.stop
+                ></video>
+              </div>
+              <div v-if="chatLoading" style="position:absolute;top:0;left:0;right:0;bottom:0;background:var(--mc-surface);display:flex;align-items:center;justify-content:center;z-index:1000;border-radius:8px">
+                <div style="text-align:center">
+                  <div class="loading-spinner"></div>
+                  <div style="margin-top:12px;color:var(--mc-text-regular);font-size:14px">加载中...</div>
+                </div>
+              </div>
+              <div ref="messagesEl" @scroll="onMessagesScroll" style="width:100%;height:100%;padding:12px;overflow:auto;background:var(--mc-surface);border:1px solid var(--mc-border);border-radius:8px">
+                <div v-if="loadingMore" style="display:flex;justify-content:center;padding:6px 0">
+                  <div class="loading-spinner" style="width:22px;height:22px;border-width:3px"></div>
+                </div>
+                <template v-for="(m, idx) in messages" :key="m.id">
+                  <div v-if="shouldShowTimeDivider(idx)" class="time-divider">
+                    <span class="time-divider-text">{{ formatTime(m) }}</span>
+                  </div>
+
+                  <div class="msg-wrapper msg-row" :data-id="m.id"
+                     :style="{ display:'flex', justifyContent: isOwnMessage(m) ? 'flex-end' : 'flex-start', marginBottom:'10px', gap: '8px' }">
+                <el-avatar v-if="!isOwnMessage(m) && messageAuthorFaceUrl(m)" shape="square" :src="messageAuthorFaceUrl(m)" :size="36" style="flex-shrink:0"></el-avatar>
+                <div :style="{ maxWidth:'80%', display:'flex', flexDirection:'column', alignItems: isOwnMessage(m) ? 'flex-end' : 'flex-start' }">
+                  <div style="font-size:12px;color:var(--mc-text-secondary);margin:0 6px 4px 6px">{{ messageAuthorName(m) }}</div>
+
+                  <div v-if="!isGlobalChat && m.replied_to && repliedRefMessage(m)" class="reply-quote"
+                       style="padding:6px 8px;border-left:3px solid var(--mc-border);background:var(--el-fill-color-lighter);margin:0 0 6px 0;border-radius:6px;width:100%">
+                    <span style="cursor:pointer" @click="scrollToMessage((typeof m.replied_to==='object') ? (m.replied_to.id||'') : m.replied_to)">
+                      {{ messageAuthorName(repliedRefMessage(m)) }}:
+                      <template v-if="messagePreviewTag(repliedRefMessage(m))">
+                        <el-tag type="info" effect="plain" size="small">{{ messagePreviewTag(repliedRefMessage(m)) }}</el-tag>
+                        <span v-if="messagePreviewSuffix(repliedRefMessage(m))"> {{ messagePreviewSuffix(repliedRefMessage(m)) }}</span>
+                      </template>
+                      <template v-else>
+                        {{ messagePreviewText(repliedRefMessage(m)) || '已回复' }}
+                      </template>
+                    </span>
+                  </div>
+
+                  <div style="display:flex;align-items:flex-end;gap:6px">
+                    <span v-if="isOwnMessage(m)" class="msg-time">{{ formatTime(m) }}</span>
+                    <div @contextmenu.prevent="onMessageContextMenu($event, m)"
+                      :style="{ padding:'8px 10px', borderRadius:'12px', border:'1px solid var(--mc-border)', background: bubbleBackground(m), width:'fit-content', maxWidth:'100%' }">
+                      <template v-if="isRecalledMessage(m)">
+                        <el-tag type="info" effect="plain" size="small">{{ recallNoticeText(m) }}</el-tag>
+                      </template>
+                      <template v-else-if="m.type==='emoji' && m.content && m.content.url">
+                        <img :src="m.content.url" alt="emoji" style="max-height:96px;display:inline-block;vertical-align:middle;cursor:pointer" @click.stop="openImagePreview(m.content.url)" />
+                      </template>
+                      <template v-else-if="m.type==='player_card' && m.content">
+                        <div style="display:flex;gap:10px;align-items:center;min-width:240px;max-width:320px">
+                          <el-avatar shape="square" :size="44" :src="m.content.faceUrl" style="flex-shrink:0">{{ (m.content.name||'?').slice(0,1) }}</el-avatar>
+                          <div style="min-width:0;flex:1">
+                            <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ m.content.name || '未知玩家' }}</div>
+                              <div style="font-size:12px;color:var(--mc-text-regular);margin-top:2px">等级：{{ (m.content.level===null || m.content.level===undefined || m.content.level==='') ? '-' : m.content.level }}</div>
+                          </div>
+                        </div>
+                      </template>
+                      <template v-else-if="m.type==='coordinate' && m.content">
+                        <div style="min-width:200px;max-width:300px">
+                          <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ m.content.name || '坐标点' }}</div>
+                          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
+                            <el-tag type="info" effect="plain" size="small">{{ m.content.dimension==='world' ? '主世界' : (m.content.dimension==='world_nether' ? '下界' : (m.content.dimension==='world_the_end' ? '末地' : (m.content.dimension || '-'))) }}</el-tag>
+                            <span style="font-size:12px;color:var(--mc-text-regular)">XYZ: {{ m.content.x }}, {{ m.content.y }}, {{ m.content.z }}</span>
+                            <el-button
+                              type="default"
+                              circle
+                              size="small"
+                              style="flex-shrink:0"
+                              title="在地图中打开"
+                              @click.stop="openCoordinateOnMap(m)"
+                            >
+                              <el-icon><location /></el-icon>
+                            </el-button>
+                          </div>
+                          <div v-if="m.content.description" style="font-size:12px;color:var(--mc-text-regular);margin-top:6px;white-space:pre-wrap;word-break:break-word">{{ m.content.description }}</div>
+                        </div>
+                      </template>
+                      <template v-else-if="isGalleryImageMessage(m)">
+                        <div
+                          style="min-width:220px;max-width:320px;border:1px solid var(--mc-border);border-radius:10px;overflow:hidden;cursor:pointer"
+                          @click.stop="openGalleryFromMessage(m)"
+                        >
+                          <div style="height:160px;background:var(--el-fill-color-lighter);display:flex;align-items:center;justify-content:center">
+                            <img
+                              v-if="galleryInfoFor(m).url"
+                              :src="galleryInfoFor(m).url"
+                              alt="gallery"
+                              style="width:100%;height:100%;object-fit:cover;display:block"
+                            />
+                            <span v-else style="font-size:12px;color:var(--mc-text-secondary)">
+                              {{ galleryInfoFor(m).loading ? '加载中…' : '相册图片' }}
+                            </span>
+                          </div>
+                          <div style="padding:10px">
+                            <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                              {{ galleryInfoFor(m).name || ('相册图片 #' + galleryInfoFor(m).id) }}
+                            </div>
+                            <div style="margin-top:4px;font-size:12px;color:var(--mc-text-secondary)">点击查看详情</div>
+                          </div>
+                        </div>
+                      </template>
+                      <template v-else-if="m.type==='file' && m.content && isImageFile(m)">
+                        <img :src="fileDisplayUrl(m)" :alt="m.content.filename || 'image'" style="max-width:320px;max-height:240px;display:block;border-radius:8px;cursor:pointer" @click.stop="openImagePreview(fileOriginalUrl(m))" />
+                        <div v-if="m.content.filename" style="margin-top:6px;font-size:12px;color:var(--mc-text-regular)">{{ messageFilename(m) }}</div>
+                      </template>
+                      <template v-else-if="m.type==='file' && m.content && isVideoFile(m)">
+                        <video
+                          :src="fileDisplayUrl(m)"
+                          style="max-width:320px;max-height:240px;display:block;border-radius:8px;cursor:pointer"
+                          :poster="m.content.thumbnailUrl || ''"
+                          muted
+                          playsinline
+                          preload="metadata"
+                          @click.stop="openVideoPreview(fileOriginalUrl(m))"
+                        ></video>
+                        <div v-if="m.content.filename" style="margin-top:6px;font-size:12px;color:var(--mc-text-regular)">{{ messageFilename(m) }}</div>
+                      </template>
+                      <template v-else-if="m.type==='video' && m.content && (m.content.url || m.content.__localUrl)">
+                        <video
+                          :src="(m.content.__localUrl || m.content.url)"
+                          style="max-width:320px;max-height:240px;display:block;border-radius:8px;cursor:pointer"
+                          :poster="m.content.thumbnailUrl || ''"
+                          muted
+                          playsinline
+                          preload="metadata"
+                          @click.stop="openVideoPreview(m.content.__localUrl || m.content.url)"
+                        ></video>
+                        <div v-if="m.content.filename" style="margin-top:6px;font-size:12px;color:var(--mc-text-regular)">{{ messageFilename(m) }}</div>
+                      </template>
+                      <template v-else-if="m.type==='file' && m.content && m.content.url">
+                        <a :href="m.content.url" target="_blank" rel="noopener" style="color:var(--mc-link);text-decoration:none">
+                          {{ messageFilename(m) || '下载文件' }}
+                        </a>
+                      </template>
+                      <template v-else>
+                        <span v-if="m.type==='text'" style="white-space:pre-wrap;word-break:break-word">
+                          <template v-for="(p, i) in messageTextParts(m)" :key="i">
+                            <el-tag v-if="p.t==='mention'" type="info" effect="plain" size="small" style="margin:0 2px">{{ p.v }}</el-tag>
+                            <span v-else>{{ p.v }}</span>
+                          </template>
+                        </span>
+                        <span v-else style="white-space:pre-wrap;word-break:break-word">{{ messageTextPreview(m) }}</span>
+                      </template>
+                    </div>
+                    <span v-if="!isOwnMessage(m)" class="msg-time">{{ formatTime(m) }}</span>
+                  </div>
+
+                  <div v-if="showReadCount(m)" @click.stop="openReadersDialog(m)" style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--mc-text-secondary);margin:4px 6px 0 6px;cursor:pointer">
+                    <el-icon style="font-size:16px;line-height:1"><user-filled /></el-icon>
+                    <span>{{ readCountFor(m) }}</span>
+                  </div>
+
+                  <div v-if="showReadStatus(m)" @click.stop="openReadersDialog(m)" style="font-size:12px;color:var(--mc-text-secondary);margin:4px 6px 0 6px;cursor:pointer">
+                    {{ readStatusTextFor(m) }}
+                  </div>
+                </div>
+              </div>
+                </div>
+                </template>
+            </div>
+            </div>
+
+              <div v-if="ctxMenuVisible" @click.stop style="position:fixed;z-index:9999;background:var(--mc-surface);border:1px solid var(--mc-border);border-radius:6px;padding:6px;min-width:120px"
+                 :style="{ left: ctxMenuX + 'px', top: ctxMenuY + 'px' }">
+              <div v-if="canCopyText(ctxMenuMsg)" style="cursor:pointer;padding:6px 10px" @click="ctxCopy">复制</div>
+              <div v-if="!isGlobalChat && canMentionFromMessage(ctxMenuMsg)" style="cursor:pointer;padding:6px 10px" @click="ctxMention">@TA</div>
+              <div v-if="!isGlobalChat" style="cursor:pointer;padding:6px 10px" @click="ctxReply">回复</div>
+              <div v-if="!isGlobalChat && canForwardMessage(ctxMenuMsg)" style="cursor:pointer;padding:6px 10px" @click="ctxForward">转发</div>
+              <div v-if="!isGlobalChat && canRecallMessage(ctxMenuMsg)" style="cursor:pointer;padding:6px 10px" @click="ctxRecall">撤回</div>
+              <div v-if="!isGlobalChat && canCollectEmoji(ctxMenuMsg)" style="cursor:pointer;padding:6px 10px" @click="ctxCollectEmoji">添加到表情包</div>
+              <div v-if="canSaveAttachment(ctxMenuMsg)" style="cursor:pointer;padding:6px 10px" @click="ctxSave">保存</div>
+            </div>
+
+            <div v-if="replyTarget" style="margin-top:10px;padding:8px;border-left:3px solid var(--mc-border);background:var(--el-fill-color-lighter);border-radius:6px">
+              <small>回复: {{ replyPreview }}</small>
+              <el-button size="small" style="margin-left:8px" @click="clearReplyTarget">取消</el-button>
+            </div>
+
+            <div style="margin-top:10px;display:flex;gap:8px;align-items:center;position:relative;flex-shrink:0">
+              <input ref="fileInputEl" type="file" accept="image/*,video/*" style="display:none" @change="onFileSelected" />
+              <div v-if="!isGlobalChat" style="display:flex;gap:0px;align-items:center;flex-shrink:0">
+                <el-button type="default" @click.stop="toggleMorePanel" circle>
+                  <span style="font-size:18px;line-height:1">+</span>
+                </el-button>
+                <el-button type="default" @click.stop="openFilePicker" circle>
+                  <el-icon><folder-opened /></el-icon>
+                </el-button>
+                <el-button type="default" @click.stop="toggleEmojiPanel" circle>
+                  <el-icon><magic-stick /></el-icon>
+                </el-button>
+              </div>
+
+              <div
+                ref="msgInputEl"
+                class="mc-rich-input"
+                contenteditable="true"
+                :data-placeholder="'输入消息'"
+                @keydown="onMsgInputKeydown"
+                @input="onMsgInputInput"
+                @paste="onMsgInputPaste"
+              ></div>
+
+              <el-button type="primary" @click="sendText">发送</el-button>
+
+              <el-dialog
+                v-model="mentionDialogVisible"
+                title="选择要 @ 的成员"
+                width="420px"
+                :close-on-click-modal="false"
+                @close="cancelMentionDialog"
+              >
+                <div style="display:flex;flex-direction:column;gap:10px">
+                  <el-checkbox v-if="canMentionAll" v-model="mentionSelectAll">@全体</el-checkbox>
+                  <div style="max-height:260px;overflow:auto;border:1px solid var(--mc-border);border-radius:8px;padding:8px">
+                    <div style="display:flex;flex-direction:column;gap:6px">
+                      <div
+                        v-for="mid in mentionMemberIds"
+                        :key="mid"
+                        @click="toggleMentionSelected(mid)"
+                        style="display:flex;align-items:center;justify-content:space-between;padding:6px 4px;border-bottom:1px solid var(--mc-border);cursor:pointer"
+                      >
+                        <div style="display:flex;gap:10px;align-items:flex-start;min-width:0;flex:1">
+                          <el-checkbox
+                            :model-value="mentionSelectIds.includes(String(mid))"
+                            @update:model-value="(v)=>setMentionSelected(mid, v)"
+                            @click.stop
+                          />
+                          <div style="min-width:0">
+                            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                              <span style="font-weight:500">{{ userLabel(mid) }}</span>
+                              <el-tag v-if="String(mid)===String(groupOwnerId)" type="info" effect="plain" size="small">群主</el-tag>
+                              <el-tag v-else-if="groupAdmins.includes(String(mid))" type="info" effect="plain" size="small">管理员</el-tag>
+                            </div>
+                            <div style="font-size:12px;color:var(--mc-text-secondary)">{{ userMinecraftId(mid) || '未绑定minecraft uuid' }}</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div v-if="(!mentionMemberIds || mentionMemberIds.length===0)" style="font-size:12px;color:var(--mc-text-secondary);padding:6px 2px">没有可选成员</div>
+                  </div>
+                </div>
+
+                <template #footer>
+                  <el-button @click="cancelMentionDialog">取消</el-button>
+                  <el-button type="primary" @click="confirmMentionDialog">确定</el-button>
+                </template>
+              </el-dialog>
+
+              <el-dialog
+                v-model="readersDialogVisible"
+                title="已读详情"
+                width="420px"
+                :close-on-click-modal="true"
+                @close="closeReadersDialog"
+              >
+                <div v-if="readersLoading" style="padding:8px 0">
+                  <el-skeleton animated :rows="4" />
+                </div>
+                <div v-else style="display:flex;flex-direction:column;gap:8px;max-height:360px;overflow:auto">
+                  <div v-if="!readersList || readersList.length===0" style="font-size:12px;color:var(--mc-text-secondary)">暂无已读用户</div>
+                  <div v-for="u in readersList" :key="u.id" style="display:flex;align-items:center;gap:10px;padding:6px 4px;border-bottom:1px solid var(--mc-border)">
+                    <el-avatar :size="32" shape="square" :src="u.faceUrl" style="flex-shrink:0">{{ (u.name||'?').slice(0,1) }}</el-avatar>
+                    <div style="min-width:0;flex:1">
+                      <div style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ u.name }}</div>
+                      <div style="font-size:12px;color:var(--mc-text-secondary)">{{ u.id }}</div>
+                    </div>
+                  </div>
+                </div>
+              </el-dialog>
+
+              <div v-if="emojiPanelVisible" @click.stop style="position:absolute;left:0;bottom:46px;width:320px;max-height:320px;overflow:auto;background:var(--mc-surface);border:1px solid var(--mc-border);padding:8px;box-shadow:0 4px 12px rgba(0,0,0,0.08);border-radius:8px">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                  <strong>我的表情包</strong>
+                  <el-button size="small" @click="goEmojiManage">管理</el-button>
+                </div>
+                <div style="display:flex;flex-wrap:wrap;gap:6px">
+                  <button v-for="p in emojiPacks" :key="p.id" @click="sendEmoji(p)" style="border:none;background:transparent;padding:4px;cursor:pointer">
+                    <img :src="p.url" alt="emoji" style="width:48px;height:48px;object-fit:contain" />
+                  </button>
+                </div>
+              </div>
+
+              <div v-if="morePanelVisible" @click.stop style="position:absolute;left:0;bottom:46px;width:320px;max-height:320px;overflow:auto;background:var(--mc-surface);border:1px solid var(--mc-border);padding:8px;box-shadow:0 4px 12px rgba(0,0,0,0.08);border-radius:8px">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                  <strong>更多</strong>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:6px">
+                  <div>
+                    <el-button type="default" plain style="width:100%;justify-content:flex-start" @click="openPlayerCardDialog">玩家名片</el-button>
+                  </div>
+                  <div>
+                    <el-button type="default" plain style="width:100%;justify-content:flex-start" @click="openCoordinateDialog">坐标</el-button>
+                  </div>
+                </div>
+              </div>
+
+              <el-dialog
+                v-model="playerCardDialogVisible"
+                title="发送玩家名片"
+                width="420px"
+                :close-on-click-modal="false"
+                @close="cancelPlayerCardDialog"
+              >
+                <div style="display:flex;flex-direction:column;gap:10px">
+                  <el-select
+                    v-model="playerCardSelectedUserId"
+                    filterable
+                    remote
+                    :remote-method="onPlayerCardQuery"
+                    :no-data-text="playerCardNoDataText()"
+                    placeholder="输入关键词搜索玩家"
+                    style="width:100%"
+                    :loading="playerCardUsersLoading"
+                  >
+                    <el-option v-for="u in playerCardOptions" :key="u.id" :label="u.username" :value="u.id">
+                      <div style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ u.username }}</div>
+                    </el-option>
+                  </el-select>
+                </div>
+
+                <template #footer>
+                  <el-button @click="cancelPlayerCardDialog">取消</el-button>
+                  <el-button type="primary" :loading="playerCardSending" @click="confirmSendPlayerCard">发送</el-button>
+                </template>
+              </el-dialog>
+
+              <el-dialog
+                v-model="coordinateDialogVisible"
+                title="发送坐标"
+                width="420px"
+                :close-on-click-modal="false"
+                @close="cancelCoordinateDialog"
+              >
+                <div style="display:flex;flex-direction:column;gap:10px">
+                  <div style="display:flex;gap:8px;align-items:center">
+                    <el-select v-model="coordinateHomeSelected" placeholder="从 Home 导入" filterable :loading="coordinateHomeLoading" style="flex:1;min-width:0">
+                      <el-option
+                        v-for="h in coordinateHomes"
+                        :key="h.name"
+                        :label="(h.name || '') + ' (' + (h.worldLabel || '-') + ') ' + (h.x || '') + ',' + (h.y || '') + ',' + (h.z || '')"
+                        :value="h.name"
+                      ></el-option>
+                    </el-select>
+                    <el-button plain :disabled="!coordinateHomeSelected || coordinateHomeLoading" @click="importCoordinateFromHome">导入</el-button>
+                  </div>
+                  <el-input v-model="coordinateForm.name" placeholder="坐标点名称"></el-input>
+                  <el-select v-model="coordinateForm.dimension" placeholder="选择维度" style="width:100%">
+                    <el-option label="主世界" value="world"></el-option>
+                    <el-option label="下界" value="world_nether"></el-option>
+                    <el-option label="末地" value="world_the_end"></el-option>
+                  </el-select>
+                  <div style="display:flex;gap:8px;width:100%">
+                    <div style="flex:1;min-width:0">
+                      <el-input v-model="coordinateForm.x" placeholder="X" inputmode="numeric" pattern="-?\d*"></el-input>
+                    </div>
+                    <div style="flex:1;min-width:0">
+                      <el-input v-model="coordinateForm.y" placeholder="Y" inputmode="numeric" pattern="-?\d*"></el-input>
+                    </div>
+                    <div style="flex:1;min-width:0">
+                      <el-input v-model="coordinateForm.z" placeholder="Z" inputmode="numeric" pattern="-?\d*"></el-input>
+                    </div>
+                  </div>
+                  <el-input v-model="coordinateForm.description" type="textarea" :rows="3" placeholder="描述（可选）"></el-input>
+                </div>
+
+                <template #footer>
+                  <el-button @click="cancelCoordinateDialog">取消</el-button>
+                  <el-button type="primary" :loading="coordinateSending" @click="confirmSendCoordinate">发送</el-button>
+                </template>
+              </el-dialog>
+            </div>
+
+            <el-dialog v-model="groupManageVisible" title="群聊管理" width="520px">
+              <div v-if="groupManageLoading" style="padding:16px">
+                <el-skeleton animated :rows="4" />
+              </div>
+              <div v-else>
+                <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                  <el-input v-model="groupEditName" placeholder="群聊名称" style="flex:1;min-width:220px"></el-input>
+                  <el-button type="primary" :loading="groupActionLoading" :disabled="!groupCanManage" @click="saveGroupName">保存名称</el-button>
+                  <span v-if="!groupCanManage" style="font-size:12px;color:var(--mc-text-secondary)">无权限修改</span>
+                </div>
+
+                <div v-if="groupCanManage" style="margin-top:12px">
+                  <input ref="groupAvatarInputEl" type="file" accept="image/*" style="display:none" @change="onGroupAvatarSelected" />
+                  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                    <div style="display:flex;align-items:center;gap:8px">
+                      <el-avatar v-if="currentChatFaceUrl" shape="square" :src="currentChatFaceUrl" :size="36"></el-avatar>
+                      <el-avatar v-else shape="square" :size="36">群</el-avatar>
+                      <div style="font-size:12px;color:var(--mc-text-secondary)">群头像</div>
+                    </div>
+                    <el-button type="primary" plain :loading="groupActionLoading" @click="openGroupAvatarPicker">设置群头像</el-button>
+                  </div>
+                </div>
+
+                <div style="margin-top:16px">
+                  <div style="font-weight:600;margin-bottom:8px">邀请成员</div>
+                  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                    <el-select v-model="inviteSelected" multiple filterable placeholder="选择要邀请的玩家" style="flex:1;min-width:260px">
+                      <el-option v-for="u in inviteOptions" :key="u.id" :label="u.label" :value="u.id" />
+                    </el-select>
+                    <el-button type="primary" :loading="groupActionLoading" :disabled="!groupCanManage || inviteSelected.length===0" @click="inviteToGroup">邀请</el-button>
+                  </div>
+                </div>
+
+                <div style="margin-top:16px">
+                  <div style="font-weight:600;margin-bottom:8px">成员</div>
+                  <div style="max-height:220px;overflow:auto;border:1px solid var(--mc-border);border-radius:8px;padding:8px;background:var(--mc-surface)">
+                    <div v-for="mid in groupMembers" :key="mid" style="display:flex;align-items:center;justify-content:space-between;padding:6px 4px;border-bottom:1px solid var(--mc-border)">
+                      <div style="min-width:0">
+                        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                          <span style="font-weight:500">{{ userLabel(mid) }}</span>
+                          <el-tag v-if="String(mid)===String(groupOwnerId)" type="info" effect="plain" size="small">群主</el-tag>
+                          <el-tag v-else-if="groupAdmins.includes(String(mid))" type="info" effect="plain" size="small">管理员</el-tag>
+                        </div>
+                        <div style="font-size:12px;color:var(--mc-text-secondary)">{{ userMinecraftId(mid) || '未绑定minecraft uuid' }}</div>
+                      </div>
+                      <div style="display:flex;gap:6px;align-items:center">
+                        <el-button
+                          v-if="groupCanManage && String(mid)!==String(groupOwnerId) && String(mid)!==String(selfUserId)"
+                          size="small"
+                          type="danger"
+                          plain
+                          :loading="groupActionLoading"
+                          @click="kickFromGroup(mid)"
+                        >移除</el-button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-if="groupIsOwner" style="margin-top:16px">
+                  <div style="font-weight:600;margin-bottom:8px">管理员</div>
+                  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                    <el-select v-model="adminSelected" multiple filterable placeholder="选择管理员（不包含群主）" style="flex:1;min-width:260px">
+                      <el-option v-for="u in adminOptions" :key="u.id" :label="u.label" :value="u.id" />
+                    </el-select>
+                    <el-button type="primary" :loading="groupActionLoading" @click="saveGroupAdmins">保存管理员</el-button>
+                  </div>
+                </div>
+
+                <div v-if="groupIsOwner" style="margin-top:16px">
+                  <div style="font-weight:600;margin-bottom:8px">转让群主</div>
+                  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                    <el-select v-model="transferOwnerId" filterable placeholder="选择新群主" style="flex:1;min-width:260px">
+                      <el-option v-for="u in transferOptions" :key="u.id" :label="u.label" :value="u.id" />
+                    </el-select>
+                    <el-button type="warning" :loading="groupActionLoading" :disabled="!transferOwnerId" @click="transferGroupOwner">转让</el-button>
+                  </div>
+                </div>
+              </div>
+
+              <template #footer>
+                <el-button v-if="groupIsOwner" type="danger" plain :loading="groupActionLoading" @click="dissolveGroupChat">解散群聊</el-button>
+                <el-button @click="groupManageVisible=false">关闭</el-button>
+              </template>
+            </el-dialog>
+
+            <el-dialog v-model="forwardDialogVisible" title="转发" width="420px" :close-on-click-modal="false" @close="cancelForwardDialog">
+              <div style="display:flex;flex-direction:column;gap:12px">
+                <div style="font-size:12px;color:var(--mc-text-secondary)">选择目标会话（不可转发到全服）</div>
+                <el-select v-model="forwardTargetChatId" placeholder="选择会话" filterable style="width:100%">
+                  <el-option v-for="c in forwardTargets" :key="c.id" :label="c.name" :value="c.id"></el-option>
+                </el-select>
+                <div style="font-size:12px;color:var(--mc-text-secondary)">内容预览</div>
+                <div style="border:1px solid var(--mc-border);border-radius:8px;padding:10px;background:var(--mc-surface);white-space:pre-wrap;word-break:break-word">
+                  {{ forwardSourcePreviewText(forwardSourceMsg) }}
+                </div>
+              </div>
+              <template #footer>
+                <el-button @click="cancelForwardDialog">取消</el-button>
+                <el-button type="primary" :loading="forwardSending" :disabled="!forwardTargetChatId" @click="confirmForward">转发</el-button>
+              </template>
+            </el-dialog>
+          </el-main>
+        </el-container>
+      </el-container>
+    </div>
+
+    <script src="/vendor/vue/vue.global.prod.js"></script>
+    <script src="/vendor/element-plus/index.full.js"></script>
+    <script src="/vendor/element-plus-icons/icons-vue.iife.min.js"></script>
+    <script src="/api/socket.io/socket.io.js"></script>
+    <script src="/watermark.js"></script>
+    <script src="/chat.js"></script>
+  </body>
+</html>

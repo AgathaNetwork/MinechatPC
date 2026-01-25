@@ -2,7 +2,7 @@
   "name": "agatha-front-electron",
   "version": "1.0.0",
   "private": true,
-  "description": "Electron wrapper for https://front-dev.agatha.org.cn",
+  "description": "Electron wrapper for local Minechat web UI (served from bundled public/)",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
@@ -32,6 +32,7 @@
     },
     "files": [
       "src/**/*",
+      "public/**/*",
       "assets/**/*",
       "scripts/**/*",
       "package.json"

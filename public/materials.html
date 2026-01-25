@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="/theme.js"></script>
+    <title>材料列表管理</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/vendor/element-plus/index.css" />
+    <link rel="stylesheet" href="/vendor/element-plus/theme-chalk/dark/css-vars.css" />
+    <style>
+      [v-cloak]{display:none}
+    </style>
+  </head>
+  <body>
+    <div id="app" v-cloak>
+      <el-container style="height:100vh">
+        <el-header style="display:flex;align-items:center;justify-content:space-between">
+          <div style="display:flex;align-items:center;gap:16px">
+            <h2 style="margin:0">材料列表管理</h2>
+            <el-menu mode="horizontal" :ellipsis="false" default-active="me" @select="onNav" style="border-bottom:none;background:transparent">
+              <el-menu-item index="chat">会话</el-menu-item>
+              <el-menu-item index="players">玩家</el-menu-item>
+              <el-menu-item index="gallery">相册</el-menu-item>
+              <el-menu-item index="me">工作台</el-menu-item>
+            </el-menu>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:8px">
+          </div>
+        </el-header>
+
+        <el-main style="padding:12px">
+          <el-card>
+            <template #header>
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                  <span style="font-weight:600">我的材料列表</span>
+                  <span style="font-size:12px;color:#888" v-if="loading">加载中…</span>
+                  <span style="font-size:12px;color:#888" v-else-if="items.length">共 {{ items.length }} 条</span>
+                </div>
+                <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                  <el-button plain :loading="loading" @click="reload">刷新</el-button>
+                  <el-button type="primary" @click="openCreate">新建材料列表</el-button>
+                </div>
+              </div>
+            </template>
+
+            <el-alert v-if="!isLoggedIn" type="warning" :closable="false" show-icon title="需要登录后才能管理材料列表"></el-alert>
+
+            <div style="margin-top:12px" v-if="loadError">
+              <el-alert type="error" :closable="false" show-icon title="加载失败"></el-alert>
+              <div style="margin-top:8px;font-size:12px;color:#666;word-break:break-all">{{ loadError }}</div>
+            </div>
+
+            <div style="margin-top:12px" v-if="isLoggedIn">
+              <el-table :data="items" size="small" style="width:100%" v-loading="loading" empty-text="暂无材料列表">
+                <el-table-column prop="name" label="标题" min-width="180"></el-table-column>
+                <el-table-column prop="description" label="描述" min-width="220"></el-table-column>
+                <el-table-column label="状态" width="110">
+                  <template #default="scope">
+                    <el-tag size="small" :type="scope.row.done ? 'success' : 'warning'">{{ scope.row.done ? '已完成' : '未完成' }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="上传时间" width="170">
+                  <template #default="scope">
+                    <span style="font-size:12px;color:#666">{{ formatTs(scope.row.upload_time) }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="完成时间" width="170">
+                  <template #default="scope">
+                    <span style="font-size:12px;color:#666">{{ scope.row.done_time ? formatTs(scope.row.done_time) : '-' }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作" width="360" fixed="right">
+                  <template #default="scope">
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:nowrap;white-space:nowrap">
+                      <el-button size="small" plain @click="openDetail(scope.row)">详情</el-button>
+                      <el-button size="small" plain @click="openEdit(scope.row)">编辑</el-button>
+                      <el-button size="small" :type="scope.row.done ? 'info' : 'success'" plain :disabled="!!scope.row.done" @click="markDone(scope.row)">{{ scope.row.done ? '已完成' : '完成' }}</el-button>
+                      <el-button size="small" type="danger" plain @click="removeItem(scope.row)">删除</el-button>
+                    </div>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+          </el-card>
+
+          <el-dialog v-model="createVisible" title="新建材料列表" width="760px">
+            <div
+              @dragover.prevent="csvDragging=true"
+              @dragleave.prevent="csvDragging=false"
+              @drop.prevent="onCsvDrop"
+              @click="openCsvPicker"
+              :style="{
+                border: '2px dashed var(--el-color-primary)',
+                borderRadius: '10px',
+                padding: '18px',
+                cursor: 'pointer',
+                marginBottom: '12px',
+                background: csvDragging ? 'var(--el-color-primary-light-9)' : 'var(--el-fill-color-lighter)',
+                color: 'var(--el-text-color-regular)'
+              }"
+            >
+              <div style="font-weight:600">将 CSV 文件拖到这里</div>
+              <div style="margin-top:6px;font-size:12px;color:var(--el-text-color-secondary)">或点击选择文件，解析后会自动填充下方材料清单</div>
+              <div style="margin-top:8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                <el-tag v-if="csvFileName" size="small" type="info" effect="plain">{{ csvFileName }}</el-tag>
+                <el-tag v-if="csvParsing" size="small" type="warning" effect="plain">解析中…</el-tag>
+              </div>
+              <div v-if="csvError" style="margin-top:10px">
+                <el-alert type="error" :closable="false" show-icon title="CSV 解析失败"></el-alert>
+                <div style="margin-top:8px;font-size:12px;color:#666;word-break:break-all">{{ csvError }}</div>
+              </div>
+
+              <input ref="csvInputRef" type="file" accept=".csv" style="display:none" @change="onCsvInputChange" />
+            </div>
+
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 12px 0">
+              <span style="font-size:12px;color:var(--el-text-color-secondary)">文件编码</span>
+              <el-select v-model="csvEncoding" size="small" style="width:160px" :disabled="csvParsing">
+                <el-option label="自动检测" value="auto"></el-option>
+                <el-option label="UTF-8" value="UTF-8"></el-option>
+                <el-option label="GBK" value="GBK"></el-option>
+                <el-option label="GB2312" value="GB2312"></el-option>
+                <el-option label="Big5" value="Big5"></el-option>
+              </el-select>
+              <el-button size="small" plain :disabled="!csvHasFile || csvParsing" @click="reparseCsv">重新解析</el-button>
+            </div>
+
+            <el-form label-width="90px">
+              <el-form-item label="标题">
+                <el-input v-model="createForm.name" placeholder="请输入标题" maxlength="120" show-word-limit></el-input>
+              </el-form-item>
+              <el-form-item label="描述">
+                <el-input v-model="createForm.description" type="textarea" :rows="3" placeholder="请输入描述" maxlength="500" show-word-limit></el-input>
+              </el-form-item>
+            </el-form>
+
+            <div style="display:flex;align-items:center;justify-content:space-between;margin:6px 0 10px 0;gap:10px;flex-wrap:wrap">
+              <div style="font-weight:600">材料清单</div>
+              <el-button size="small" plain @click="addCreateRow">添加一行</el-button>
+            </div>
+
+            <el-table :data="createForm.items" size="small" style="width:100%" empty-text="请添加材料项">
+              <el-table-column label="名称" min-width="260">
+                <template #default="scope">
+                  <el-input v-model="scope.row.name" placeholder="材料名称" size="small"></el-input>
+                </template>
+              </el-table-column>
+              <el-table-column label="数量" width="160">
+                <template #default="scope">
+                  <el-input-number v-model="scope.row.count" :min="1" :max="999999" size="small"></el-input-number>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="90">
+                <template #default="scope">
+                  <el-button size="small" type="danger" plain @click="removeCreateRow(scope.$index)">移除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+
+            <template #footer>
+              <div style="display:flex;justify-content:flex-end;gap:10px">
+                <el-button @click="createVisible=false">取消</el-button>
+                <el-button type="primary" :loading="creating" @click="submitCreate">创建</el-button>
+              </div>
+            </template>
+          </el-dialog>
+
+          <el-dialog v-model="editVisible" title="编辑材料列表" width="560px">
+            <el-form label-width="90px">
+              <el-form-item label="标题">
+                <el-input v-model="editForm.name" placeholder="请输入标题" maxlength="120" show-word-limit></el-input>
+              </el-form-item>
+              <el-form-item label="描述">
+                <el-input v-model="editForm.description" type="textarea" :rows="3" placeholder="请输入描述" maxlength="500" show-word-limit></el-input>
+              </el-form-item>
+            </el-form>
+
+            <template #footer>
+              <div style="display:flex;justify-content:flex-end;gap:10px">
+                <el-button @click="editVisible=false">取消</el-button>
+                <el-button type="primary" :loading="editing" @click="submitEdit">保存</el-button>
+              </div>
+            </template>
+          </el-dialog>
+
+          <el-dialog v-model="detailVisible" title="材料列表详情" width="860px">
+            <el-skeleton :loading="detailLoading" animated>
+              <template #template>
+                <el-skeleton-item variant="text" style="width:40%"></el-skeleton-item>
+                <el-skeleton-item variant="text" style="width:70%;margin-top:10px"></el-skeleton-item>
+                <el-skeleton-item variant="text" style="width:55%;margin-top:10px"></el-skeleton-item>
+                <el-skeleton-item variant="rect" style="width:100%;height:220px;margin-top:12px"></el-skeleton-item>
+              </template>
+
+              <template #default>
+                <div v-if="detailError" style="margin-bottom:10px">
+                  <el-alert type="error" :closable="false" show-icon title="加载详情失败"></el-alert>
+                  <div style="margin-top:8px;font-size:12px;color:#666;word-break:break-all">{{ detailError }}</div>
+                </div>
+
+                <div v-if="detailData" style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
+                  <div>
+                    <div style="font-size:16px;font-weight:600">{{ detailData.name }}</div>
+                    <div style="margin-top:6px;color:#666">{{ detailData.description }}</div>
+                    <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                      <el-tag size="small" :type="detailData.done ? 'success' : 'warning'">{{ detailData.done ? '已完成' : '未完成' }}</el-tag>
+                      <span style="font-size:12px;color:#888">上传：{{ formatTs(detailData.upload_time) }}</span>
+                      <span style="font-size:12px;color:#888" v-if="detailData.done_time">完成：{{ formatTs(detailData.done_time) }}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div style="margin-top:12px">
+                  <div style="font-weight:600;margin-bottom:8px">材料清单</div>
+                  <el-table :data="detailItems" size="small" style="width:100%" empty-text="无材料项">
+                    <el-table-column prop="name" label="名称" min-width="220"></el-table-column>
+                    <el-table-column prop="count" label="数量" width="120"></el-table-column>
+                    <el-table-column prop="occupied" label="领取" min-width="160">
+                      <template #default="scope">
+                        <span>{{ scope.row.occupied || '-' }}</span>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="状态" width="110">
+                      <template #default="scope">
+                        <el-tag size="small" :type="scope.row.done ? 'success' : 'info'">{{ scope.row.done ? '完成' : '未完成' }}</el-tag>
+                      </template>
+                    </el-table-column>
+                    <el-table-column prop="doneby" label="完成者" min-width="160">
+                      <template #default="scope">
+                        <span>{{ scope.row.doneby || '-' }}</span>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="完成时间" width="170">
+                      <template #default="scope">
+                        <span style="font-size:12px;color:#666">{{ scope.row.donetime ? formatTs(scope.row.donetime) : '-' }}</span>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                </div>
+              </template>
+            </el-skeleton>
+
+            <template #footer>
+              <div style="display:flex;justify-content:flex-end">
+                <el-button @click="detailVisible=false">关闭</el-button>
+              </div>
+            </template>
+          </el-dialog>
+        </el-main>
+      </el-container>
+    </div>
+
+    <script src="/vendor/vue/vue.global.prod.js"></script>
+    <script src="/vendor/element-plus/index.full.js"></script>
+    <script src="/vendor/element-plus-icons/icons-vue.iife.min.js"></script>
+    <script src="/materials.js"></script>
+  </body>
+</html>

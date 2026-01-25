@@ -5,6 +5,7 @@ const notifier = require('node-notifier');
 const util = require('util');
 const fs = require('fs');
 const path = require('path');
+const { getWsBase } = require('./runtimeConfig');
 let socket = null;
 let reconnectTimer = null;
 
@@ -41,10 +42,14 @@ async function connectNotifySocket(onNotify) {
     reconnectTimer = null;
   }
 
-  // 这里假设API服务和前端在同一主机
   const token = await getToken();
-  // 固定后端 host，避免自动检测失败
-  const wsBase = 'https://front-dev.agatha.org.cn';
+
+  // 后端基址通过环境变量配置（避免硬编码前端域名）。
+  const wsBase = getWsBase();
+  if (!wsBase) {
+    console.log('[notify] wsBase not configured; set MINECHAT_API_BASE (or MINECHAT_API_PROXY_BASE)');
+    return;
+  }
   try {
     require('fs').appendFileSync(require('path').join(process.cwd(), 'notify-debug.log'), `[notify] socket create: ${wsBase} path=/api/notify auth.token=${token ? 'yes' : 'no'}\n`);
   } catch (e) {}
@@ -60,7 +65,7 @@ async function connectNotifySocket(onNotify) {
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
-      secure: true,
+      secure: /^https:/i.test(wsBase),
     });
   } catch (e) {
     try { require('fs').appendFileSync(require('path').join(process.cwd(), 'notify-debug.log'), `[notify] socket create error: ${e?.message || e}\n`); } catch (err) {}

@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="/theme.js"></script>
+    <title>玩家列表</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/vendor/element-plus/index.css" />
+    <link rel="stylesheet" href="/vendor/element-plus/theme-chalk/dark/css-vars.css" />
+    <style>
+      [v-cloak]{display:none}
+      .md{font-size:13px;line-height:1.7;word-break:break-word}
+      .md h1,.md h2,.md h3{margin:10px 0 6px;font-weight:700}
+      .md pre{background:rgba(0,0,0,0.04);padding:10px;border-radius:8px;overflow:auto}
+      .md code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace}
+      .md a{color:var(--el-color-primary);text-decoration:none}
+      .md a:hover{text-decoration:underline}
+    </style>
+  </head>
+  <body>
+    <div id="app" v-cloak>
+      <el-container style="height:100vh">
+        <el-header style="display:flex;align-items:center;justify-content:space-between">
+          <div style="display:flex;align-items:center;gap:16px">
+            <h2 style="margin:0">玩家</h2>
+            <el-menu mode="horizontal" :ellipsis="false" default-active="players" @select="onNav" style="border-bottom:none;background:transparent">
+              <el-menu-item index="chat">会话</el-menu-item>
+              <el-menu-item index="players">玩家</el-menu-item>
+              <el-menu-item index="gallery">相册</el-menu-item>
+              <el-menu-item index="me">工作台</el-menu-item>
+            </el-menu>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+          </div>
+        </el-header>
+        <el-main style="padding:12px">
+          <el-input v-model="q" placeholder="搜索玩家（用户名/部分匹配）" clearable @input="onInput"></el-input>
+          <div style="margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <el-button v-if="!groupMode" size="small" type="primary" plain @click="enterGroupMode">创建群聊</el-button>
+            <template v-else>
+              <el-input v-model="groupName" size="small" placeholder="群聊名称（可选）" style="max-width:220px"></el-input>
+              <el-button size="small" type="primary" :loading="createGroupLoading" :disabled="selectedCount() < 2" @click="createGroupChat">创建</el-button>
+              <el-button size="small" @click="cancelGroupMode">取消</el-button>
+              <span style="font-size:12px;color:#888">已选 {{ selectedCount() }} 人（至少 2 人）</span>
+            </template>
+          </div>
+          <el-skeleton animated :loading="usersLoading" style="margin-top:12px">
+            <template #template>
+              <div v-for="i in 8" :key="i" style="display:flex;justify-content:space-between;align-items:center;padding:8px;border-bottom:1px solid #eee">
+                <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
+                  <el-skeleton-item variant="rect" style="width:40px;height:40px;border-radius:4px;flex-shrink:0"></el-skeleton-item>
+                  <div style="flex:1;min-width:0">
+                    <el-skeleton-item variant="text" style="width:160px"></el-skeleton-item>
+                    <div style="margin-top:6px">
+                      <el-skeleton-item variant="text" style="width:120px"></el-skeleton-item>
+                    </div>
+                  </div>
+                </div>
+                <el-skeleton-item variant="rect" style="width:56px;height:24px;border-radius:4px"></el-skeleton-item>
+              </div>
+            </template>
+            <template #default>
+              <div>
+                <div v-for="u in filtered" :key="u.id" style="border-bottom:1px solid #eee">
+                  <div style="display:flex;justify-content:space-between;align-items:center;padding:8px">
+                    <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
+                    <el-checkbox
+                      v-if="groupMode"
+                      :model-value="isSelected(u.id)"
+                      :disabled="selfUserId && String(u.id)===String(selfUserId)"
+                      @change="(val)=>setSelected(u.id, val)"
+                    ></el-checkbox>
+
+                    <el-avatar v-if="u.faceUrl" shape="square" :src="u.faceUrl" :size="40"></el-avatar>
+                    <el-avatar v-else shape="square" :size="40">{{ (u.username || u.id).charAt(0).toUpperCase() }}</el-avatar>
+
+                    <div style="min-width:0">
+                      <div style="font-weight:600;display:flex;align-items:center;gap:8px">
+                        <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ u.username || u.id }}</span>
+                      </div>
+					            <div style="font-size:12px;color:#888">{{ u.mcUuid || '' }}</div>
+                    </div>
+                  </div>
+                    <div>
+                      <div style="display:flex;gap:8px;align-items:center">
+                        <el-button size="small" type="primary" plain circle title="查看" @click="openBrief(u)">
+                          <el-icon><postcard /></el-icon>
+                        </el-button>
+                        <el-button size="small" type="primary" plain circle title="私聊" @click="openChat(u.id)">
+                          <el-icon><chat-line-round /></el-icon>
+                        </el-button>
+                        <el-button size="small" type="primary" plain circle title="文件" @click="toggleUserDisk(u)">
+                          <el-icon><folder-opened /></el-icon>
+                        </el-button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div v-if="isUserDiskOpen(u.id)" style="padding:0 8px 12px 52px">
+                    <el-skeleton :loading="userDiskLoading(u.id)" animated>
+                      <template #template>
+                        <el-skeleton-item variant="text" style="width:240px"></el-skeleton-item>
+                        <el-skeleton-item variant="rect" style="width:100%;height:88px;margin-top:10px"></el-skeleton-item>
+                      </template>
+
+                      <template #default>
+                        <div v-if="userDiskError(u.id)" style="margin-top:8px">
+                          <el-alert type="error" :closable="false" show-icon title="加载失败"></el-alert>
+                          <div style="margin-top:8px;font-size:12px;color:#666;word-break:break-all">{{ userDiskError(u.id) }}</div>
+                        </div>
+
+                        <div v-else>
+                          <div v-if="!userDiskFiles(u.id).length" style="margin-top:8px;font-size:12px;color:#888">
+                            暂无文件
+                          </div>
+                          <el-table v-else :data="userDiskFiles(u.id)" border size="small" style="width:100%;margin-top:8px">
+                            <el-table-column prop="name" label="名称" min-width="220"></el-table-column>
+                            <el-table-column prop="sizeText" label="大小" width="120"></el-table-column>
+                            <el-table-column label="操作" width="170" fixed="right">
+                              <template #default="scope">
+                                <el-button size="small" plain @click="viewUserDiskFile(u, scope.row)">查看</el-button>
+                                <el-button size="small" type="primary" plain @click="downloadUserDiskFile(scope.row)">下载</el-button>
+                              </template>
+                            </el-table-column>
+                          </el-table>
+                        </div>
+                      </template>
+                    </el-skeleton>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </el-skeleton>
+
+          <el-dialog v-model="diskDialogVisible" title="文件" width="520px">
+            <div style="margin-top:6px;font-size:12px;color:#888" v-if="diskDialogHint">{{ diskDialogHint }}</div>
+            <div style="margin-top:12px" v-if="diskDialogRows && diskDialogRows.length">
+              <el-table :data="diskDialogRows" border size="small" style="width:100%" :show-header="false">
+                <el-table-column prop="k" width="120"></el-table-column>
+                <el-table-column prop="v"></el-table-column>
+              </el-table>
+            </div>
+            <template #footer>
+              <el-button @click="diskDialogVisible=false">关闭</el-button>
+              <el-button type="primary" plain @click="downloadUserDiskFile(diskDialogFile)">下载</el-button>
+            </template>
+          </el-dialog>
+
+          <el-dialog v-model="briefDialogVisible" title="玩家信息" width="520px">
+            <el-skeleton :loading="briefLoading" animated>
+              <template #template>
+                <div style="display:flex;gap:16px;align-items:center;margin-top:10px">
+                  <el-skeleton-item variant="image" style="width:64px;height:64px;border-radius:8px"></el-skeleton-item>
+                  <div style="flex:1">
+                    <el-skeleton-item variant="text" style="width:40%"></el-skeleton-item>
+                    <el-skeleton-item variant="text" style="width:60%;margin-top:10px"></el-skeleton-item>
+                  </div>
+                </div>
+                <el-skeleton-item variant="text" style="width:100%;margin-top:14px"></el-skeleton-item>
+                <el-skeleton-item variant="text" style="width:45%;margin-top:10px"></el-skeleton-item>
+              </template>
+
+              <template #default>
+                <div style="display:flex;gap:16px;align-items:center;margin-top:10px">
+                  <el-avatar shape="square" :src="briefFaceUrl || ''" :size="64" style="flex:0 0 auto">{{ briefInitial }}</el-avatar>
+                  <div style="flex:1;min-width:0">
+                    <div style="font-size:16px;font-weight:600;line-height:1.4">{{ briefDisplayName }}</div>
+                    <div style="font-size:12px;color:#888;line-height:1.6;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ briefUuid }}</div>
+                  </div>
+                </div>
+
+                <div style="margin-top:12px" v-if="briefError">
+                  <el-alert type="error" :closable="false" show-icon title="加载失败"></el-alert>
+                  <div style="margin-top:8px;font-size:12px;color:#666;word-break:break-all">{{ briefError }}</div>
+                </div>
+
+                <div style="margin-top:12px" v-if="briefRows && briefRows.length">
+                  <el-table :data="briefRows" border size="small" style="width:100%" :show-header="false">
+                    <el-table-column prop="k" width="120"></el-table-column>
+                    <el-table-column prop="v"></el-table-column>
+                  </el-table>
+                </div>
+
+                <div style="margin-top:12px" v-if="briefPasteMarkdown">
+                  <el-divider content-position="left">签名档</el-divider>
+                  <div style="font-size:12px;color:#888;margin-bottom:8px" v-if="briefPasteTimeText">{{ briefPasteTimeText }}</div>
+                  <div class="md" v-html="briefPasteHtml"></div>
+                </div>
+              </template>
+            </el-skeleton>
+          </el-dialog>
+        </el-main>
+      </el-container>
+    </div>
+
+    <script src="/vendor/vue/vue.global.prod.js"></script>
+    <script src="/vendor/element-plus/index.full.js"></script>
+    <script src="/vendor/element-plus-icons/icons-vue.iife.min.js"></script>
+    <script src="/players.js"></script>
+  </body>
+</html>

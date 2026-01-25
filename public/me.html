@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="/theme.js"></script>
+    <title>工作台</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/vendor/element-plus/index.css" />
+    <link rel="stylesheet" href="/vendor/element-plus/theme-chalk/dark/css-vars.css" />
+    <style>
+      [v-cloak]{display:none}
+      .playtime-months{display:grid;grid-template-columns:repeat(auto-fit, 260px);gap:12px;justify-content:center;align-items:start}
+      .playtime-month-card{width:260px}
+      .playtime-month-title{font-weight:600;text-align:center;margin-bottom:6px}
+      .playtime-dow{display:grid;grid-template-columns:repeat(7, 14px);gap:4px;justify-content:center;font-size:12px;color:#666;margin-bottom:6px}
+      .playtime-dow > div{text-align:center;line-height:14px;height:14px}
+      .playtime-cells{display:grid;grid-template-columns:repeat(7, 14px);grid-auto-rows:14px;gap:4px;justify-content:center}
+    </style>
+  </head>
+  <body>
+    <div id="app" v-cloak>
+      <el-container style="height:100vh">
+        <el-header style="display:flex;align-items:center;justify-content:space-between">
+          <div style="display:flex;align-items:center;gap:16px">
+            <h2 style="margin:0">工作台</h2>
+            <el-menu mode="horizontal" :ellipsis="false" default-active="me" @select="onNav" style="border-bottom:none;background:transparent">
+              <el-menu-item index="chat">会话</el-menu-item>
+              <el-menu-item index="players">玩家</el-menu-item>
+              <el-menu-item index="gallery">相册</el-menu-item>
+              <el-menu-item index="me">工作台</el-menu-item>
+            </el-menu>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:8px">
+          </div>
+        </el-header>
+
+        <el-main style="padding:12px">
+          <el-card>
+            <template #header>
+              <div style="display:flex;align-items:center;justify-content:space-between">
+                <span style="font-weight:600">个人信息</span>
+                <span style="font-size:12px;color:#888" v-if="loading">加载中…</span>
+              </div>
+            </template>
+
+            <el-skeleton :loading="loading" animated>
+              <template #template>
+                <div style="display:flex;gap:16px;align-items:center">
+                  <el-skeleton-item variant="image" style="width:72px;height:72px;border-radius:8px"></el-skeleton-item>
+                  <div style="flex:1">
+                    <el-skeleton-item variant="text" style="width:40%"></el-skeleton-item>
+                    <el-skeleton-item variant="text" style="width:55%;margin-top:10px"></el-skeleton-item>
+                  </div>
+                </div>
+                <el-skeleton-item variant="text" style="width:100%;margin-top:14px"></el-skeleton-item>
+                <el-skeleton-item variant="text" style="width:45%;margin-top:10px"></el-skeleton-item>
+              </template>
+
+              <template #default>
+                <div style="display:flex;gap:16px;align-items:center">
+                  <el-avatar shape="square" :src="selfFaceUrl || ''" :size="72" style="flex:0 0 auto">{{ selfInitial }}</el-avatar>
+                  <div style="flex:1">
+                    <div style="font-size:16px;font-weight:600;line-height:1.4">{{ selfDisplayName }}</div>
+                    <div style="font-size:12px;color:#888;line-height:1.6">{{ selfIdHint }}</div>
+                    <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+                      <el-tag size="small" :type="selfOnlineDisplay ? 'success' : 'info'">{{ selfOnlineDisplay ? '在线' : '离线' }}</el-tag>
+                    </div>
+                  </div>
+                </div>
+
+                <el-table :data="profileRows" border size="small" style="width:100%;margin-top:10px" :show-header="false">
+                  <el-table-column prop="k" width="120"></el-table-column>
+                  <el-table-column prop="v"></el-table-column>
+                </el-table>
+              </template>
+            </el-skeleton>
+
+            <div style="margin-top:12px" v-if="lastResult">
+              <el-alert type="success" :closable="false" show-icon title="更新成功"></el-alert>
+            </div>
+
+            <div style="margin-top:12px" v-if="lastError">
+              <el-alert type="error" :closable="false" show-icon title="更新失败"></el-alert>
+              <div style="margin-top:8px;font-size:12px;color:#666;word-break:break-all">{{ lastError }}</div>
+            </div>
+          </el-card>
+
+          <el-card style="margin-top:12px">
+            <template #header>
+              <div style="display:flex;align-items:center;justify-content:space-between">
+                <span style="font-weight:600">账户服务</span>
+              </div>
+            </template>
+
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+              <el-button plain @click="gotoTotp">
+                <el-icon style="margin-right:4px"><setting /></el-icon>
+                TOTP 管理
+              </el-button>
+              <el-button plain @click="openPasteDialog">
+                <el-icon style="margin-right:4px"><edit /></el-icon>
+                设置签名档
+              </el-button>
+              <el-button plain @click="openIdDialog">
+                <el-icon style="margin-right:4px"><document /></el-icon>
+                实名认证查询
+              </el-button>
+              <el-button plain @click="openHistoryDialog">
+                <el-icon style="margin-right:4px"><clock /></el-icon>
+                登录记录查询
+              </el-button>
+              <el-button plain :loading="updating" :disabled="!isLoggedIn || updating || loading" @click="updateFace">
+                <el-icon style="margin-right:4px"><refresh /></el-icon>
+                更新头像
+              </el-button>
+              <el-button plain :disabled="!isLoggedIn || updating || loading" @click="logout">
+                <el-icon style="margin-right:4px"><top-right /></el-icon>
+                登出
+              </el-button>
+            </div>
+          </el-card>
+
+          <el-card style="margin-top:12px">
+            <template #header>
+              <div style="display:flex;align-items:center;justify-content:space-between">
+                <span style="font-weight:600">游戏服务</span>
+              </div>
+            </template>
+
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+              <el-button plain @click="openHomeDialog">
+                <el-icon style="margin-right:4px"><search /></el-icon>
+                Home查询
+              </el-button>
+              <el-button plain @click="gotoDisk">
+                <el-icon style="margin-right:4px"><folder-opened /></el-icon>
+                网盘
+              </el-button>
+              <el-button plain @click="gotoMaterials">
+                <el-icon style="margin-right:4px"><list /></el-icon>
+                材料列表管理
+              </el-button>
+              <el-button plain @click="openPlaytimeDialog">
+                <el-icon style="margin-right:4px"><stopwatch /></el-icon>
+                游玩时长记录
+              </el-button>
+              <el-button plain @click="gotoBigMap">
+                <el-icon style="margin-right:4px"><location /></el-icon>
+                大地图
+              </el-button>
+            </div>
+          </el-card>
+
+          <el-card style="margin-top:12px">
+            <template #header>
+              <div style="display:flex;align-items:center;justify-content:space-between">
+                <span style="font-weight:600">设置</span>
+              </div>
+            </template>
+
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+              <div style="font-size:14px;color:var(--mc-text-regular)">主题</div>
+              <el-switch v-model="themeDark" inline-prompt active-text="深色" inactive-text="浅色"></el-switch>
+            </div>
+          </el-card>
+
+          <el-dialog v-model="homeDialogVisible" title="Home查询" width="720px">
+            <el-alert v-if="!isLoggedIn" type="warning" :closable="false" show-icon title="需要登录后才能查询"></el-alert>
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px">
+              <el-input v-model="homeNameQuery" placeholder="按 Home名 模糊搜索" style="width:260px" clearable></el-input>
+              <el-select v-model="homeWorldFilter" placeholder="选择世界" clearable style="width:160px">
+                <el-option label="主世界" value="world"></el-option>
+                <el-option label="下界" value="world_nether"></el-option>
+                <el-option label="末地" value="world_the_end"></el-option>
+              </el-select>
+              <el-button plain :loading="homeLoading" :disabled="!isLoggedIn || homeLoading" @click="runHomeQuery">刷新</el-button>
+              <span style="font-size:12px;color:#888" v-if="homeLoading">加载中…</span>
+              <span style="font-size:12px;color:#888" v-else-if="filteredHomes && filteredHomes.length">共 {{ filteredHomes.length }} 条</span>
+            </div>
+
+            <div style="margin-top:12px" v-if="homeError">
+              <el-alert type="error" :closable="false" show-icon title="查询失败"></el-alert>
+              <div style="margin-top:8px;font-size:12px;color:#666;word-break:break-all">{{ homeError }}</div>
+            </div>
+
+            <div style="margin-top:12px" v-if="filteredHomes && filteredHomes.length">
+              <el-table :data="filteredHomes" size="small" style="width:100%">
+                <el-table-column prop="name" label="Home" min-width="140"></el-table-column>
+                <el-table-column prop="worldLabel" label="世界" min-width="120"></el-table-column>
+                <el-table-column prop="x" label="X" width="90"></el-table-column>
+                <el-table-column prop="y" label="Y" width="70"></el-table-column>
+                <el-table-column prop="z" label="Z" width="90"></el-table-column>
+              </el-table>
+            </div>
+
+            <div style="margin-top:12px;font-size:12px;color:#888" v-else-if="!homeLoading && isLoggedIn">暂无 Home 数据</div>
+          </el-dialog>
+
+          <el-dialog v-model="playtimeDialogVisible" title="游玩时长记录" width="720px">
+            <el-alert v-if="!isLoggedIn" type="warning" :closable="false" show-icon title="需要登录后才能查询"></el-alert>
+
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px">
+              <el-button plain :loading="playtimeLoading" :disabled="!isLoggedIn || playtimeLoading" @click="runPlaytimeQuery">刷新</el-button>
+              <span style="font-size:12px;color:#888" v-if="playtimeLoading">加载中…</span>
+              <span style="font-size:12px;color:#888" v-else-if="playtimeSummaryText">{{ playtimeSummaryText }}</span>
+            </div>
+
+            <div style="margin-top:12px" v-if="playtimeError">
+              <el-alert type="error" :closable="false" show-icon title="查询失败"></el-alert>
+              <div style="margin-top:8px;font-size:12px;color:#666;word-break:break-all">{{ playtimeError }}</div>
+            </div>
+
+            <div style="margin-top:12px" v-if="playtimeHasAny">
+              <div class="playtime-months">
+                <el-card v-for="m in playtimeMonthBlocks" :key="m.key" class="playtime-month-card" :body-style="{ padding: '8px' }">
+                  <div class="playtime-month-title">{{ m.title }}</div>
+                  <div class="playtime-dow">
+                    <div v-for="w in ['日','一','二','三','四','五','六']" :key="w">{{ w }}</div>
+                  </div>
+                  <div class="playtime-cells">
+                    <template v-for="cell in m.cells" :key="cell.key">
+                      <div v-if="cell.kind === 'pad'" :style="playtimeCellStyle(cell)"></div>
+                      <el-popover v-else placement="top" trigger="hover" :teleported="false">
+                        <template #reference>
+                          <div :style="playtimeCellStyle(cell)"></div>
+                        </template>
+                        <div style="font-size:12px;line-height:1.6">
+                          <div style="font-weight:600">{{ cell.dayKey }}</div>
+                          <div v-if="cell.seconds > 0">在线时长：{{ cell.durationText }}（{{ cell.seconds }}秒）</div>
+                          <div v-else>无记录</div>
+                        </div>
+                      </el-popover>
+                    </template>
+                  </div>
+                </el-card>
+              </div>
+
+              <div style="margin-top:8px;font-size:12px;color:#888">统计范围：最近 365 天（按每天在线秒数统计）</div>
+            </div>
+
+            <div style="margin-top:12px;font-size:12px;color:#888" v-else-if="!playtimeLoading && isLoggedIn">暂无游玩记录</div>
+          </el-dialog>
+
+          <el-dialog v-model="idDialogVisible" title="实名认证查询" width="520px">
+            <el-alert v-if="!isLoggedIn" type="warning" :closable="false" show-icon title="需要登录后才能查询"></el-alert>
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px">
+              <span style="font-size:12px;color:#888" v-if="idLoading">加载中…</span>
+            </div>
+            <div style="margin-top:12px" v-if="idError">
+              <el-alert type="error" :closable="false" show-icon title="查询失败"></el-alert>
+              <div style="margin-top:8px;font-size:12px;color:#666;word-break:break-all">{{ idError }}</div>
+            </div>
+            <div style="margin-top:12px" v-if="idRows && idRows.length">
+              <el-table :data="idRows" border size="small" style="width:100%" :show-header="false">
+                <el-table-column prop="k" width="120"></el-table-column>
+                <el-table-column prop="v"></el-table-column>
+              </el-table>
+            </div>
+          </el-dialog>
+
+          <el-dialog v-model="historyDialogVisible" title="登录记录查询" width="720px">
+            <el-alert v-if="!isLoggedIn" type="warning" :closable="false" show-icon title="需要登录后才能查询"></el-alert>
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px">
+              <span style="font-size:12px;color:#888" v-if="historyLoading">加载中…</span>
+              <span style="font-size:12px;color:#888" v-else-if="historyList && historyList.length">共 {{ historyList.length }} 条，最多显示10条</span>
+            </div>
+            <div style="margin-top:12px" v-if="historyError">
+              <el-alert type="error" :closable="false" show-icon title="查询失败"></el-alert>
+              <div style="margin-top:8px;font-size:12px;color:#666;word-break:break-all">{{ historyError }}</div>
+            </div>
+            <div style="margin-top:12px" v-if="historyList && historyList.length">
+              <el-table :data="historyList" size="small" style="width:100%">
+                <el-table-column prop="time" label="时间" min-width="160"></el-table-column>
+                <el-table-column prop="ip" label="IP" min-width="140"></el-table-column>
+              </el-table>
+            </div>
+          </el-dialog>
+
+          <el-dialog v-model="pasteDialogVisible" title="设置签名档" width="720px" :close-on-click-modal="false">
+            <el-alert v-if="!isLoggedIn" type="warning" :closable="false" show-icon title="需要登录后才能设置"></el-alert>
+            <el-alert
+              v-else
+              type="info"
+              :closable="false"
+              show-icon
+              title="提示"
+              description="签名档经审核后对所有人可见。请勿发布违法、违规或不当内容。"
+              style="margin-top:8px"
+            ></el-alert>
+
+            <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+              <el-button plain :loading="pasteLoading" :disabled="pasteLoading" @click="loadPasteExisting(true)">复原</el-button>
+              <el-button plain :disabled="pasteSaving" @click="pasteEditMarkdown = ''">清空</el-button>
+              <el-button type="primary" :loading="pasteSaving" :disabled="!isLoggedIn || pasteSaving" @click="savePaste">提交保存</el-button>
+              <span style="font-size:12px;color:#888" v-if="pasteExistingTimeText">当前已通过版本：{{ pasteExistingTimeText }}</span>
+            </div>
+
+            <div style="margin-top:12px">
+              <el-input
+                v-model="pasteEditMarkdown"
+                type="textarea"
+                :rows="10"
+                placeholder="支持简易 Markdown：# 标题、**粗体**、*斜体*、`代码`、```代码块```、- 列表、[链接](https://...)"
+              ></el-input>
+            </div>
+
+            <div style="margin-top:12px" v-if="pasteError">
+              <el-alert type="error" :closable="false" show-icon title="提交失败"></el-alert>
+              <div style="margin-top:8px;font-size:12px;color:#666;word-break:break-all">{{ pasteError }}</div>
+            </div>
+
+            <div style="margin-top:12px" v-if="pasteResult">
+              <el-alert type="success" :closable="false" show-icon title="提交成功"></el-alert>
+              <div style="margin-top:8px;font-size:12px;color:#666;word-break:break-all">{{ pasteResult }}</div>
+            </div>
+
+            <div style="margin-top:12px">
+              <div style="font-weight:600;margin-bottom:6px">预览</div>
+              <div
+                v-if="pastePreviewHtml"
+                v-html="pastePreviewHtml"
+                style="border:1px solid var(--el-border-color);border-radius:8px;padding:10px;background:var(--mc-surface);max-height:360px;overflow:auto"
+              ></div>
+              <div v-else style="font-size:12px;color:#888">暂无内容</div>
+            </div>
+          </el-dialog>
+        </el-main>
+      </el-container>
+    </div>
+
+    <script src="/vendor/vue/vue.global.prod.js"></script>
+    <script src="/vendor/element-plus/index.full.js"></script>
+    <script src="/vendor/element-plus-icons/icons-vue.iife.min.js"></script>
+    <script src="/me.js"></script>
+  </body>
+</html>
