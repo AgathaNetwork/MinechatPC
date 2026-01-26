@@ -1021,7 +1021,10 @@ const app = createApp({
       } catch (e) {}
       try {
         const id = selfUserId.value !== null && selfUserId.value !== undefined ? String(selfUserId.value) : '';
-        if (id) return id;
+        if (id && userNameCache && userNameCache[id]) {
+          const n = String(userNameCache[id] || '').trim();
+          if (n) return n;
+        }
       } catch (e) {}
       return 'Minechat';
     }
@@ -3075,6 +3078,13 @@ const app = createApp({
             }
             const name = me.username || me.displayName;
             if (name && selfUserId.value) userNameCache[selfUserId.value] = String(name);
+            // Keep a stable localStorage hint for watermark and other UI.
+            if (name) {
+              try {
+                const current = String(localStorage.getItem('username') || '').trim();
+                if (!current) localStorage.setItem('username', String(name));
+              } catch (e) {}
+            }
             return;
           }
         }
@@ -4652,9 +4662,10 @@ const app = createApp({
         }
 
         // 回写到 sqlite（fire-and-forget）
+        // 注意：不要直接传 chats.value（Vue 响应式 Proxy 可能导致 IPC 结构化克隆失败）。
         try {
           const db = getLocalDb();
-          if (db) db.setChats(chats.value);
+          if (db) db.setChats(serverChats);
         } catch (e) {}
 
         // Initialize unread flags from server snapshot (covers offline期间收到消息的提示).
