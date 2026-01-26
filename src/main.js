@@ -1062,37 +1062,133 @@ async function getCacheInfoForPersistentSession() {
     storagePath = null;
   }
 
+  // Local sqlite cache file (chat list + messages)
+  let sqliteBytes = null;
+  try {
+    const dbFilePath = getMinechatDbFilePath();
+    if (dbFilePath) {
+      const st = await fs.promises.stat(dbFilePath);
+      if (st && st.isFile()) sqliteBytes = st.size || 0;
+    }
+  } catch {
+    sqliteBytes = null;
+  }
+
   const diskCacheFolders = [];
+
+  function addOrAccumulateFolderBytes(name, bytes) {
+    if (!name) return;
+    const b = typeof bytes === 'number' && Number.isFinite(bytes) && bytes >= 0 ? bytes : 0;
+    const hit = diskCacheFolders.find((x) => x && x.name === name);
+    if (hit) hit.bytes = (hit.bytes || 0) + b;
+    else diskCacheFolders.push({ name, bytes: b });
+  }
+
+  async function dirBytesIfExists(dirPath) {
+    try {
+      const st = await fs.promises.stat(dirPath);
+      if (!st.isDirectory()) return null;
+      return await dirSizeBytes(dirPath);
+    } catch {
+      return null;
+    }
+  }
+
+  function isSubPath(childPath, parentPath) {
+    try {
+      const parent = path.resolve(parentPath);
+      const child = path.resolve(childPath);
+      const p = parent.endsWith(path.sep) ? parent : parent + path.sep;
+      return child === parent || child.startsWith(p);
+    } catch {
+      return false;
+    }
+  }
   let diskCacheTotalBytes = null;
+  let total = 0;
+  let hasAny = false;
   if (storagePath) {
-    const candidates = [
-      { name: 'Cache', rel: 'Cache' },
-      { name: 'Code Cache', rel: 'Code Cache' },
-      { name: 'GPUCache', rel: 'GPUCache' },
-      { name: 'Service Worker', rel: 'Service Worker' },
-      { name: 'CacheStorage', rel: 'CacheStorage' }
+    // Non-overlapping accounting for offline directories.
+    // Some Chromium builds place CacheStorage under "Service Worker/CacheStorage".
+    // If we count both folders separately, sizes overlap.
+
+    const cacheBytes = await dirBytesIfExists(path.join(storagePath, 'Cache'));
+    if (typeof cacheBytes === 'number') {
+      addOrAccumulateFolderBytes('Cache', cacheBytes);
+      total += cacheBytes;
+      hasAny = true;
+    }
+
+    const codeCacheBytes = await dirBytesIfExists(path.join(storagePath, 'Code Cache'));
+    if (typeof codeCacheBytes === 'number') {
+      addOrAccumulateFolderBytes('Code Cache', codeCacheBytes);
+      total += codeCacheBytes;
+      hasAny = true;
+    }
+
+    const gpuCacheBytes = await dirBytesIfExists(path.join(storagePath, 'GPUCache'));
+    if (typeof gpuCacheBytes === 'number') {
+      addOrAccumulateFolderBytes('GPUCache', gpuCacheBytes);
+      total += gpuCacheBytes;
+      hasAny = true;
+    }
+
+    const serviceWorkerPath = path.join(storagePath, 'Service Worker');
+    const swRawBytes = await dirBytesIfExists(serviceWorkerPath);
+
+    const cacheStorageCandidates = [
+      path.join(storagePath, 'CacheStorage'),
+      path.join(storagePath, 'Cache Storage'),
+      path.join(serviceWorkerPath, 'CacheStorage'),
+      path.join(serviceWorkerPath, 'Cache Storage')
     ];
 
-    let total = 0;
-    for (const c of candidates) {
-      const p = path.join(storagePath, c.rel);
-      try {
-        const st = await fs.promises.stat(p);
-        if (!st.isDirectory()) continue;
-      } catch {
-        continue;
+    let cacheStoragePath = '';
+    let cacheStorageBytes = null;
+    for (const p of cacheStorageCandidates) {
+      const b = await dirBytesIfExists(p);
+      if (typeof b === 'number') {
+        cacheStoragePath = p;
+        cacheStorageBytes = b;
+        break;
       }
-
-      const bytes = await dirSizeBytes(p);
-      diskCacheFolders.push({ name: c.name, bytes });
-      total += bytes;
     }
-    diskCacheTotalBytes = total;
+
+    let swBytes = swRawBytes;
+    if (
+      typeof swRawBytes === 'number' &&
+      typeof cacheStorageBytes === 'number' &&
+      cacheStoragePath &&
+      isSubPath(cacheStoragePath, serviceWorkerPath)
+    ) {
+      swBytes = Math.max(0, swRawBytes - cacheStorageBytes);
+    }
+
+    if (typeof cacheStorageBytes === 'number') {
+      addOrAccumulateFolderBytes('CacheStorage', cacheStorageBytes);
+      total += cacheStorageBytes;
+      hasAny = true;
+    }
+
+    if (typeof swBytes === 'number') {
+      addOrAccumulateFolderBytes('Service Worker', swBytes);
+      total += swBytes;
+      hasAny = true;
+    }
   }
+
+  if (typeof sqliteBytes === 'number') {
+    addOrAccumulateFolderBytes('Minechat SQLite', sqliteBytes);
+    total += sqliteBytes;
+    hasAny = true;
+  }
+
+  diskCacheTotalBytes = hasAny ? total : null;
 
   return {
     httpCacheBytes: formatBytes(httpCacheBytes),
     diskCacheTotalBytes: formatBytes(diskCacheTotalBytes),
+    sqliteBytes: formatBytes(sqliteBytes),
     diskCacheFolders
   };
 }
@@ -1113,13 +1209,16 @@ async function getOfflineCacheInfoForPersistentSession() {
   const cacheInfo = await getCacheInfoForPersistentSession();
   const cacheStorageBytes = pickFolderBytes(cacheInfo, 'CacheStorage');
   const serviceWorkerBytes = pickFolderBytes(cacheInfo, 'Service Worker');
+  const sqliteBytes = cacheInfo && typeof cacheInfo.sqliteBytes === 'number' ? cacheInfo.sqliteBytes : null;
   const total =
     (typeof cacheStorageBytes === 'number' ? cacheStorageBytes : 0) +
-    (typeof serviceWorkerBytes === 'number' ? serviceWorkerBytes : 0);
+    (typeof serviceWorkerBytes === 'number' ? serviceWorkerBytes : 0) +
+    (typeof sqliteBytes === 'number' ? sqliteBytes : 0);
 
   return {
     cacheStorageBytes,
     serviceWorkerBytes,
+    sqliteBytes: formatBytes(sqliteBytes),
     offlineTotalBytes: formatBytes(total)
   };
 }
@@ -1135,6 +1234,30 @@ async function clearOfflineCacheForPersistentSession() {
   // Best-effort: also clear HTTP cache metadata. This does not clear cookies.
   try {
     await sess.clearCache();
+  } catch {
+    // ignore
+  }
+
+  // Clear local sqlite cache (chat list + messages)
+  try {
+    const dbFilePath = getMinechatDbFilePath();
+    try {
+      if (minechatSqliteCache && typeof minechatSqliteCache.close === 'function') {
+        await minechatSqliteCache.close();
+      }
+    } catch {
+      // ignore
+    }
+    minechatSqliteCache = null;
+    minechatSqliteCacheInitPromise = null;
+
+    if (dbFilePath) {
+      try {
+        await fs.promises.unlink(dbFilePath);
+      } catch {
+        // ignore missing
+      }
+    }
   } catch {
     // ignore
   }
@@ -1429,9 +1552,11 @@ app.whenReady().then(async () => {
     });
 
     ipcMain.handle('agatha-settings:open-cache-folder', async () => {
-      const storagePath = getPersistentSessionStoragePath();
-      if (!storagePath) return { ok: false, error: 'storagePath_unavailable' };
-      const err = await shell.openPath(storagePath);
+      // userData contains both Electron partition storage and our sqlite cache file.
+      let p = '';
+      try { p = app.getPath('userData'); } catch { p = ''; }
+      if (!p) return { ok: false, error: 'userData_unavailable' };
+      const err = await shell.openPath(p);
       return err ? { ok: false, error: err } : { ok: true };
     });
 

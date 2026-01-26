@@ -38,8 +38,11 @@
       td.value { text-align: right; white-space: nowrap; }
       .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
 
+      /* Indent offline breakdown rows under "离线缓存合计". */
+      tr.offline-sub td:first-child { padding-left: 26px; }
+
       /* Indent cache detail rows under "磁盘缓存总计". */
-      tr.cache-sub td:first-child { padding-left: 26px; }
+      tr.disk-sub td:first-child { padding-left: 26px; }
     </style>
   </head>
   <body>
@@ -73,9 +76,10 @@
         </thead>
         <tbody id="cacheTable">
           <tr><td>HTTP 缓存</td><td class="value" id="cell-http">-</td></tr>
-          <tr><td>离线缓存（CacheStorage）</td><td class="value" id="cell-offline-cache">-</td></tr>
-          <tr><td>Service Worker</td><td class="value" id="cell-offline-sw">-</td></tr>
           <tr><td>离线缓存合计</td><td class="value" id="cell-offline-total">-</td></tr>
+          <tr class="offline-sub"><td>CacheStorage（含 OSS 永久缓存）</td><td class="value" id="cell-offline-cache">-</td></tr>
+          <tr class="offline-sub"><td>Service Worker</td><td class="value" id="cell-offline-sw">-</td></tr>
+          <tr class="offline-sub"><td>本地消息缓存（SQLite）</td><td class="value" id="cell-offline-sqlite">-</td></tr>
           <tr><td>磁盘缓存总计</td><td class="value" id="cell-disk-total">-</td></tr>
         </tbody>
       </table>
@@ -144,15 +148,18 @@
               const offline = await api.getOfflineCacheInfo();
               $('cell-offline-cache').textContent = formatBytes(offline?.cacheStorageBytes);
               $('cell-offline-sw').textContent = formatBytes(offline?.serviceWorkerBytes);
+              $('cell-offline-sqlite').textContent = formatBytes(offline?.sqliteBytes);
               $('cell-offline-total').textContent = formatBytes(offline?.offlineTotalBytes);
             } else {
               $('cell-offline-cache').textContent = '-';
               $('cell-offline-sw').textContent = '-';
+              $('cell-offline-sqlite').textContent = '-';
               $('cell-offline-total').textContent = '-';
             }
           } catch (e) {
             $('cell-offline-cache').textContent = '读取失败';
             $('cell-offline-sw').textContent = '读取失败';
+            $('cell-offline-sqlite').textContent = '读取失败';
             $('cell-offline-total').textContent = '读取失败';
           }
 
@@ -161,12 +168,18 @@
           $('cell-disk-total').textContent = info.diskCacheTotalBytes != null ? formatBytes(info.diskCacheTotalBytes) : '-';
 
           const tbody = $('cacheTable');
-          // keep first 2 rows (http + total)
-          while (tbody.children.length > 2) tbody.removeChild(tbody.lastElementChild);
+          // Remove previously appended disk breakdown rows only.
+          Array.from(tbody.querySelectorAll('tr.disk-sub')).forEach((tr) => {
+            try { tr.remove(); } catch (e) {}
+          });
           if (Array.isArray(info.diskCacheFolders)) {
             for (const entry of info.diskCacheFolders) {
+              // These are already shown in the offline section above.
+              if (entry && (entry.name === 'CacheStorage' || entry.name === 'Service Worker' || entry.name === 'Minechat SQLite')) {
+                continue;
+              }
               const tr = document.createElement('tr');
-              tr.className = 'cache-sub';
+              tr.className = 'disk-sub';
               const tdName = document.createElement('td');
               tdName.textContent = entry.name;
               const tdVal = document.createElement('td');
