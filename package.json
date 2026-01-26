@@ -19,6 +19,7 @@
     "png-to-ico": "^2.1.8"
   },
   "dependencies": {
+    "sql.js": "^1.10.3",
     "ws": "^8.0.0",
     "node-notifier": "^10.0.1",
     "socket.io-client": "^4.7.2"

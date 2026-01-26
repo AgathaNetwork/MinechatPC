@@ -3,6 +3,7 @@ const { startNotifyListener, notifyAuthTokenUpdated } = require('./notify');
 const { startModImageImportListener, DEFAULT_HOST: MOD_IMPORT_DEFAULT_HOST, DEFAULT_PORT: MOD_IMPORT_DEFAULT_PORT } = require('./modImageImportListener');
 const { startLocalWebServer } = require('./localWebServer');
 const { getRuntimeConfig } = require('./runtimeConfig');
+const { createMinechatSqliteCache } = require('./minechatSqliteCache');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -60,6 +61,31 @@ const PERSIST_PARTITION = 'persist:agatha-front';
 const APP_HOSTNAME = '127.0.0.1';
 const LOCAL_WEB_HOST = APP_HOSTNAME;
 let localWebServer = null;
+
+let minechatSqliteCache = null;
+let minechatSqliteCacheInitPromise = null;
+
+function getMinechatDbFilePath() {
+  try {
+    return path.join(app.getPath('userData'), 'minechat-cache.sqlite');
+  } catch {
+    return '';
+  }
+}
+
+async function ensureMinechatSqliteCache() {
+  if (minechatSqliteCache) return minechatSqliteCache;
+  if (minechatSqliteCacheInitPromise) return minechatSqliteCacheInitPromise;
+
+  minechatSqliteCacheInitPromise = (async () => {
+    const dbFilePath = getMinechatDbFilePath();
+    if (!dbFilePath) throw new Error('userData_unavailable');
+    minechatSqliteCache = await createMinechatSqliteCache({ dbFilePath });
+    return minechatSqliteCache;
+  })();
+
+  return minechatSqliteCacheInitPromise;
+}
 
 // Local listener for Minecraft mod -> MinechatPC.
 // Allow overriding via env for debugging.
@@ -1439,6 +1465,40 @@ app.whenReady().then(async () => {
       // ignore
     }
 
+    // Local SQLite cache (renderer -> main) for chat list and messages.
+    try {
+      if (!globalThis.__minechatDbIpcInstalled) {
+        globalThis.__minechatDbIpcInstalled = true;
+
+        ipcMain.handle('minechat-db:getChats', async () => {
+          const db = await ensureMinechatSqliteCache();
+          return await db.getChats();
+        });
+
+        ipcMain.handle('minechat-db:setChats', async (event, chatList) => {
+          const db = await ensureMinechatSqliteCache();
+          return await db.setChats(chatList);
+        });
+
+        ipcMain.handle('minechat-db:getMessages', async (event, chatId) => {
+          const db = await ensureMinechatSqliteCache();
+          return await db.getMessages(chatId);
+        });
+
+        ipcMain.handle('minechat-db:setMessages', async (event, chatId, messageList) => {
+          const db = await ensureMinechatSqliteCache();
+          return await db.setMessages(chatId, messageList);
+        });
+
+        ipcMain.handle('minechat-db:clearAll', async () => {
+          const db = await ensureMinechatSqliteCache();
+          return await db.clearAll();
+        });
+      }
+    } catch {
+      // ignore
+    }
+
   // IPC: window controls from the injected overlay (not cookies).
   ipcMain.on('agatha-window-control', (event, action) => {
     const win = BrowserWindow.fromWebContents(event.sender);
@@ -1523,6 +1583,14 @@ app.on('before-quit', () => {
   try {
     if (localWebServer && typeof localWebServer.close === 'function') {
       localWebServer.close();
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    if (minechatSqliteCache && typeof minechatSqliteCache.close === 'function') {
+      minechatSqliteCache.close();
     }
   } catch {
     // ignore

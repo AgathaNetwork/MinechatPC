@@ -28,6 +28,26 @@ contextBridge.exposeInMainWorld('sendTokenToHost', (token) => {
 	try { ipcRenderer.send('minechat-auth:setToken', String(token || '')); } catch (e) {}
 });
 
+// Local sqlite cache bridge (renderer -> main).
+// 在浏览器环境下 window.minechatDb 不存在，前端会自动降级。
+contextBridge.exposeInMainWorld('minechatDb', {
+	getChats: async () => {
+		try { return await ipcRenderer.invoke('minechat-db:getChats'); } catch (e) { return []; }
+	},
+	setChats: async (chats) => {
+		try { return await ipcRenderer.invoke('minechat-db:setChats', Array.isArray(chats) ? chats : []); } catch (e) { return { ok: false }; }
+	},
+	getMessages: async (chatId) => {
+		try { return await ipcRenderer.invoke('minechat-db:getMessages', String(chatId || '')); } catch (e) { return []; }
+	},
+	setMessages: async (chatId, messages) => {
+		try { return await ipcRenderer.invoke('minechat-db:setMessages', String(chatId || ''), Array.isArray(messages) ? messages : []); } catch (e) { return { ok: false }; }
+	},
+	clearAll: async () => {
+		try { return await ipcRenderer.invoke('minechat-db:clearAll'); } catch (e) { return { ok: false }; }
+	}
+});
+
 function syncExistingTokenOnce() {
 	try {
 		const t = String((globalThis.localStorage && globalThis.localStorage.getItem('token')) || '').trim();

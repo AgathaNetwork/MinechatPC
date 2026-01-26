@@ -129,6 +129,32 @@ const app = createApp({
 
     const replyTarget = ref(null);
 
+    // ---- Local sqlite cache (Electron only) ----
+    function getLocalDb() {
+      try {
+        const db = window && window.minechatDb;
+        if (!db) return null;
+        if (typeof db.getChats !== 'function' || typeof db.getMessages !== 'function') return null;
+        return db;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function diffIdSet(oldArr, newArr) {
+      try {
+        const oldIds = new Set((Array.isArray(oldArr) ? oldArr : []).map((x) => (x && x.id !== undefined && x.id !== null ? String(x.id) : '')).filter(Boolean));
+        const newIds = new Set((Array.isArray(newArr) ? newArr : []).map((x) => (x && x.id !== undefined && x.id !== null ? String(x.id) : '')).filter(Boolean));
+        let added = 0;
+        let removed = 0;
+        for (const id of newIds) if (!oldIds.has(id)) added++;
+        for (const id of oldIds) if (!newIds.has(id)) removed++;
+        return { added, removed, changed: added > 0 || removed > 0 || oldIds.size !== newIds.size };
+      } catch (e) {
+        return { added: 0, removed: 0, changed: true };
+      }
+    }
+
     // Read details dialog (reader list)
     const readersDialogVisible = ref(false);
     const readersLoading = ref(false);
@@ -4595,6 +4621,19 @@ const app = createApp({
     async function loadChats() {
       chatsLoading.value = true;
       try {
+        // 先从本地 sqlite 缓存恢复会话列表（不阻塞后续网络刷新）。
+        let cachedChats = null;
+        try {
+          const db = getLocalDb();
+          if (db) {
+            const local = await db.getChats();
+            if (Array.isArray(local) && local.length > 0) {
+              cachedChats = local;
+              chats.value = sortChatsList(local);
+            }
+          }
+        } catch (e) {}
+
         if (!usersIndexLoaded.value) {
           await loadUsersIndex();
           await resolveSelfProfile();
@@ -4602,7 +4641,21 @@ const app = createApp({
         const res = await safeFetch(`${apiBase.value}/chats`);
         if (!res.ok) throw new Error('未登录或请求失败');
         const raw = await res.json();
-        chats.value = sortChatsList(raw);
+        const serverChats = sortChatsList(raw);
+        // 对照 API：补上缺少的、减去多余的（以 API 为准）。
+        try {
+          const diff = diffIdSet(cachedChats || chats.value, serverChats);
+          if (diff.changed) chats.value = serverChats;
+          else chats.value = serverChats; // keep consistent ordering
+        } catch (e) {
+          chats.value = serverChats;
+        }
+
+        // 回写到 sqlite（fire-and-forget）
+        try {
+          const db = getLocalDb();
+          if (db) db.setChats(chats.value);
+        } catch (e) {}
 
         // Initialize unread flags from server snapshot (covers offline期间收到消息的提示).
         try {
@@ -4680,6 +4733,10 @@ const app = createApp({
     }
 
     async function openChat(id) {
+      // Prevent out-of-order async updates when switching chats quickly.
+      if (!openChat.__seq) openChat.__seq = 0;
+      const seq = ++openChat.__seq;
+
       // Draft preservation across chat switching:
       // 1) Save previous chat's composer content (including reply/@ chips)
       // 2) Clear composer for the next chat
@@ -4721,6 +4778,42 @@ const app = createApp({
 
       const isGlobal = id === 'global';
       try {
+        // 先从本地 sqlite 缓存恢复消息列表，提升打开速度。
+        let cachedMsgs = null;
+        try {
+          const db = getLocalDb();
+          if (db) {
+            const local = await db.getMessages(id);
+            if (seq !== openChat.__seq) return;
+            if (Array.isArray(local) && local.length > 0) {
+              cachedMsgs = local;
+              // Normalize and build msgById so reply preview etc works.
+              for (const k of Object.keys(msgById)) delete msgById[k];
+              (local || []).forEach((m) => {
+                normalizeMessage(m, isGlobal);
+                if (m && m.id && !isAuditRecalledMessage(m)) msgById[m.id] = m;
+              });
+
+              const userIds = new Set();
+              (local || []).forEach((m) => {
+                normalizeMessage(m, isGlobal);
+                if (m && m.from_user) userIds.add(m.from_user);
+                if (!isGlobal && m && m.replied_to) {
+                  const ref = typeof m.replied_to === 'object' ? m.replied_to : msgById[m.replied_to];
+                  if (ref && ref.from_user) userIds.add(ref.from_user);
+                }
+              });
+              try { await fetchMissingUserNames(userIds); } catch (e) {}
+
+              messages.value = (local || []).slice().filter((m) => !isAuditRecalledMessage(m)).map((m) => normalizeMessage(m, isGlobal));
+              await nextTick();
+              if (messagesEl.value) messagesEl.value.scrollTop = messagesEl.value.scrollHeight;
+              // 让用户先看到缓存内容，不必等网络。
+              chatLoading.value = false;
+            }
+          }
+        } catch (e) {}
+
         if (isGlobal) {
           currentChatTitle.value = '全服';
           currentChatFaceUrl.value = '/img/Ag_0404.png';
@@ -4797,6 +4890,8 @@ const app = createApp({
         // Silent audit recall: never render these messages.
         if (Array.isArray(msgs)) msgs = msgs.filter((m) => !isAuditRecalledMessage(m));
 
+        if (seq !== openChat.__seq) return;
+
         // reset maps
         messages.value = [];
         for (const k of Object.keys(msgById)) delete msgById[k];
@@ -4817,7 +4912,22 @@ const app = createApp({
         });
         await fetchMissingUserNames(userIds);
 
-        messages.value = msgs.slice().filter((m) => !isAuditRecalledMessage(m)).map((m) => normalizeMessage(m, isGlobal));
+        const serverMsgs = msgs.slice().filter((m) => !isAuditRecalledMessage(m)).map((m) => normalizeMessage(m, isGlobal));
+
+        // 对照 API：补上缺少的、减去多余的（以 API 为准）。
+        try {
+          const diff = diffIdSet(cachedMsgs || messages.value, serverMsgs);
+          if (diff.changed) messages.value = serverMsgs;
+          else messages.value = serverMsgs;
+        } catch (e) {
+          messages.value = serverMsgs;
+        }
+
+        // 回写到 sqlite（fire-and-forget）
+        try {
+          const db = getLocalDb();
+          if (db) db.setMessages(id, serverMsgs);
+        } catch (e) {}
         noMoreBefore.value = !Array.isArray(msgs) || msgs.length < PAGE_LIMIT;
 
         await nextTick();
@@ -4894,6 +5004,12 @@ const app = createApp({
         await fetchMissingUserNames(moreUserIds);
 
         messages.value = more.concat(messages.value).filter((m) => !isAuditRecalledMessage(m)).map((m) => normalizeMessage(m, isGlobal));
+
+        // Best-effort: update local cache with current snapshot.
+        try {
+          const db = getLocalDb();
+          if (db) db.setMessages(currentChatId.value, messages.value);
+        } catch (e) {}
 
         await nextTick();
         const newScrollHeight = messagesEl.value.scrollHeight;
