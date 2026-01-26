@@ -155,6 +155,13 @@ createApp({
       apiBase.value = conf.apiProxyBase || conf.apiBase;
     }
 
+    function syncTokenToHostIfExists() {
+      try {
+        const t = String(localStorage.getItem('token') || '').trim();
+        if (t && typeof sendTokenToHost === 'function') sendTokenToHost(t);
+      } catch (e) {}
+    }
+
     async function checkSession() {
       try {
         const res = await fetch(`${apiBase.value}/chats`, { credentials: 'include' });
@@ -179,6 +186,11 @@ createApp({
     function gotoRegister() {
       window.location.href = '/register.html';
     }
+
+    onMounted(() => {
+      // For users who already have a token and skip login.
+      syncTokenToHostIfExists();
+    });
 
     async function loginWithTotp() {
       if (totpLoggingIn.value) return;

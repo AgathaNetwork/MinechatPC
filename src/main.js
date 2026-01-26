@@ -1,11 +1,45 @@
 const { app, BrowserWindow, Menu, ipcMain, session, shell, Tray } = require('electron');
-const { startNotifyListener } = require('./notify');
+const { startNotifyListener, notifyAuthTokenUpdated } = require('./notify');
 const { startModImageImportListener, DEFAULT_HOST: MOD_IMPORT_DEFAULT_HOST, DEFAULT_PORT: MOD_IMPORT_DEFAULT_PORT } = require('./modImageImportListener');
 const { startLocalWebServer } = require('./localWebServer');
 const { getRuntimeConfig } = require('./runtimeConfig');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+
+function getTokenFilePath() {
+  try {
+    return path.join(app.getPath('userData'), 'token.txt');
+  } catch {
+    return '';
+  }
+}
+
+function persistTokenToDisk(token) {
+  const p = getTokenFilePath();
+  if (!p) return;
+  const t = String(token || '').trim();
+  try {
+    if (!t) {
+      try { fs.unlinkSync(p); } catch (e) {}
+      return;
+    }
+    fs.writeFileSync(p, t, 'utf8');
+  } catch {
+    // ignore
+  }
+}
+
+function readTokenFromDisk() {
+  const p = getTokenFilePath();
+  if (!p) return '';
+  try {
+    const data = fs.readFileSync(p, 'utf8');
+    return String(data || '').trim();
+  } catch {
+    return '';
+  }
+}
 
 // Force a consistent display name (tray tooltip, etc.).
 app.setName('Minechat');
@@ -449,6 +483,9 @@ async function performNativeLogout(targetWindow) {
   } catch {
     // ignore
   }
+
+  // Also clear persisted token used by main-process notify socket.
+  try { persistTokenToDisk(''); } catch {}
 
   // Load the login page (index) with a cache-busting query.
   const u = new URL('/', START_URL);
@@ -1384,6 +1421,23 @@ app.whenReady().then(async () => {
         buildTimeMs: build?.buildTimeMs || null
       };
     });
+
+    // Token sync from renderer -> main process.
+    // notify.js runs in main process and reads userData/token.txt.
+    try {
+      if (!globalThis.__minechatAuthIpcInstalled) {
+        globalThis.__minechatAuthIpcInstalled = true;
+        ipcMain.on('minechat-auth:setToken', (event, token) => {
+          try { persistTokenToDisk(String(token || '')); } catch {}
+          try { notifyAuthTokenUpdated && notifyAuthTokenUpdated(); } catch {}
+        });
+        ipcMain.handle('minechat-auth:getToken', async () => {
+          return readTokenFromDisk();
+        });
+      }
+    } catch {
+      // ignore
+    }
 
   // IPC: window controls from the injected overlay (not cookies).
   ipcMain.on('agatha-window-control', (event, action) => {

@@ -8,6 +8,8 @@ const path = require('path');
 const { getWsBase } = require('./runtimeConfig');
 let socket = null;
 let reconnectTimer = null;
+let lastToken = '';
+let lastOnNotify = null;
 
 async function getToken() {
   // 优先从应用数据目录的 token.txt 读取（如果存在），否则尝试从渲染进程的 localStorage 获取
@@ -28,6 +30,7 @@ async function getToken() {
 }
 
 async function connectNotifySocket(onNotify) {
+  lastOnNotify = onNotify;
   if (socket) {
     try {
       require('fs').appendFileSync(require('path').join(process.cwd(), 'notify-debug.log'), '[notify] socket disconnect\n');
@@ -42,7 +45,19 @@ async function connectNotifySocket(onNotify) {
     reconnectTimer = null;
   }
 
-  const token = await getToken();
+  const token = String(await getToken() || '').trim();
+  // 没有 token 时不要连（后端会报 Missing auth 并导致 client 反复重连刷屏）
+  if (!token) {
+    console.log('[notify] token missing; skip connect');
+    if (!reconnectTimer) {
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        try { connectNotifySocket(onNotify); } catch (e) { console.error('[notify] reconnect error', e); }
+      }, 3000);
+    }
+    return;
+  }
+  lastToken = token;
 
   // Prefer local embedded reverse proxy if available (same-origin with UI).
   // Fallback to direct backend origin.
@@ -60,7 +75,7 @@ async function connectNotifySocket(onNotify) {
   try {
     socket = io(wsBase, {
       path: '/api/notify',
-      transports: ['websocket'],
+      transports: ['websocket', 'polling'],
       auth: { token },
       reconnection: true,
       reconnectionAttempts: Infinity,
@@ -95,7 +110,15 @@ async function connectNotifySocket(onNotify) {
       require('fs').appendFileSync(require('path').join(process.cwd(), 'notify-debug.log'), `[notify] socket connect_error: ${err?.message || err}\n`);
     } catch (e) {}
     console.log('[notify] socket connect_error', err);
-    // 如果连接未建立，启用回退重试：关闭当前 socket 并在 5s 后重建
+    const msg = String(err && err.message ? err.message : err || '');
+    // 鉴权失败：等待 token 更新后再重连
+    if (/missing auth|unauthorized|invalid session|session expired/i.test(msg)) {
+      try { socket && socket.close(); } catch (e) {}
+      socket = null;
+      lastToken = '';
+    }
+
+    // 如果连接未建立，启用回退重试：关闭当前 socket 并在 3s 后重建
     if (!socket || !socket.connected) {
       try { socket && socket.close(); } catch (e) {}
       socket = null;
@@ -103,7 +126,7 @@ async function connectNotifySocket(onNotify) {
         reconnectTimer = setTimeout(() => {
           reconnectTimer = null;
           try { connectNotifySocket(onNotify); } catch (e) { console.error('[notify] reconnect error', e); }
-        }, 5000);
+        }, 3000);
       }
     }
   });
@@ -112,6 +135,23 @@ async function connectNotifySocket(onNotify) {
   socket.on('notify.message', (payload) => {
     try { if (typeof onNotify === 'function') onNotify(payload); } catch (e) {}
   });
+}
+
+// Called by main process when renderer updates the token.
+function notifyAuthTokenUpdated() {
+  try {
+    const onNotify = lastOnNotify;
+    // Force rebuild socket so auth token is refreshed.
+    try { socket && socket.close(); } catch (e) {}
+    socket = null;
+    if (reconnectTimer) {
+      try { clearTimeout(reconnectTimer); } catch (e) {}
+      reconnectTimer = null;
+    }
+    if (typeof onNotify === 'function') connectNotifySocket(onNotify);
+  } catch (e) {
+    // ignore
+  }
 }
 
 function startNotifyListener() {
@@ -243,4 +283,4 @@ function startNotifyListener() {
   });
 }
 
-module.exports = { startNotifyListener };
+module.exports = { startNotifyListener, notifyAuthTokenUpdated };

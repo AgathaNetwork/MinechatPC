@@ -47,6 +47,15 @@ async function init(){
   apiAuthBase = conf.apiBase;
   apiBase = conf.apiProxyBase || conf.apiBase;
   setupAuth();
+
+  // If user already has a token (skip login), sync it to the Electron main process.
+  try {
+    if (token) {
+      if (typeof sendTokenToHost === 'function') sendTokenToHost(token);
+      else if (window.minechatAuth && typeof window.minechatAuth.setToken === 'function') window.minechatAuth.setToken(token);
+    }
+  } catch(e){}
+
   // try to load chats using cookie-based session first
   try{
     const res = await fetch(`${apiBase}/chats`, { credentials: 'include' });
@@ -67,6 +76,10 @@ function setupAuth(){
             const data = JSON.parse(txt);
             if(data.token){
               token = data.token; localStorage.setItem('token', token);
+              try {
+                if (typeof sendTokenToHost === 'function') sendTokenToHost(token);
+                else if (window.minechatAuth && typeof window.minechatAuth.setToken === 'function') window.minechatAuth.setToken(token);
+              } catch(e){}
               // if server set cookie in response, it will be stored; redirect to chat
               popup.close(); clearInterval(timer); window.location.href = '/chat.html';
             }
@@ -78,6 +91,10 @@ function setupAuth(){
 
   $('logoutBtn').addEventListener('click', ()=>{
     token = null; localStorage.removeItem('token');
+    try {
+      if (typeof sendTokenToHost === 'function') sendTokenToHost('');
+      else if (window.minechatAuth && typeof window.minechatAuth.clearToken === 'function') window.minechatAuth.clearToken();
+    } catch(e){}
     // attempt logout on server (optional) then return to login
     try{ fetch(`${apiAuthBase || apiBase}/auth/logout`, { method: 'POST', credentials: 'include' }).catch(()=>{}); }catch(e){}
     window.location.href = '/';
@@ -85,7 +102,14 @@ function setupAuth(){
 
   $('applyToken').addEventListener('click', ()=>{
     const t = $('manualToken').value.trim();
-    if(t){ token = t; localStorage.setItem('token', t); $('pasteToken').style.display='none'; showLoggedIn(); loadChats(); }
+    if(t){
+      token = t; localStorage.setItem('token', t);
+      try {
+        if (typeof sendTokenToHost === 'function') sendTokenToHost(t);
+        else if (window.minechatAuth && typeof window.minechatAuth.setToken === 'function') window.minechatAuth.setToken(t);
+      } catch(e){}
+      $('pasteToken').style.display='none'; showLoggedIn(); loadChats();
+    }
   });
 }
 
