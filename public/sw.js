@@ -15,6 +15,13 @@ const CACHE_PREFIX = 'minechat-static';
 const CACHE_VERSION = 1;
 const CACHE_NAME = `${CACHE_PREFIX}-v${CACHE_VERSION}`;
 
+// OSS 资源“永久缓存”（按需写入，命中即离线可用）
+// 说明：浏览器/Chromium 仍可能在磁盘压力下回收存储；前端会尝试申请 Persistent Storage。
+const OSS_HOST = 'ag-chatapp.oss-cn-hangzhou.aliyuncs.com';
+const OSS_CACHE_PREFIX = 'minechat-oss-perma';
+const OSS_CACHE_VERSION = 1;
+const OSS_CACHE_NAME = `${OSS_CACHE_PREFIX}-v${OSS_CACHE_VERSION}`;
+
 const CACHEABLE_EXTS = new Set([
   '.html',
   '.js',
@@ -52,6 +59,37 @@ function isCacheableStaticRequest(request) {
   } catch {
     return false;
   }
+}
+
+function isOssRequest(request) {
+  try {
+    if (!request || request.method !== 'GET') return false;
+    const url = new URL(request.url);
+    return url.hostname === OSS_HOST;
+  } catch {
+    return false;
+  }
+}
+
+async function ossCacheFirst(request) {
+  const cache = await caches.open(OSS_CACHE_NAME);
+  // 使用 URL 字符串做 key，避免同一 URL 因 mode/no-cors 差异导致 cache.match 失配。
+  const cacheKey = request.url;
+
+  const cached = await cache.match(cacheKey);
+  if (cached) return cached;
+
+  // 未命中：走网络并写入缓存（跨域资源可能是 opaque 响应，也允许缓存）。
+  const reqNoStore = new Request(request, { cache: 'no-store' });
+  const resp = await fetch(reqNoStore);
+  if (resp) {
+    try {
+      await cache.put(cacheKey, resp.clone());
+    } catch {
+      // ignore quota / opaque put failure
+    }
+  }
+  return resp;
 }
 
 async function cacheFirst(request) {
@@ -103,6 +141,24 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const req = event.request;
+
+  // OSS 域名资源：持久缓存（cache-first）。
+  if (isOssRequest(req)) {
+    event.respondWith(
+      (async () => {
+        try {
+          return await ossCacheFirst(req);
+        } catch {
+          const cache = await caches.open(OSS_CACHE_NAME);
+          const cached = await cache.match(req.url);
+          if (cached) return cached;
+          return new Response('', { status: 504 });
+        }
+      })()
+    );
+    return;
+  }
+
   if (!isCacheableStaticRequest(req)) return;
 
   event.respondWith(

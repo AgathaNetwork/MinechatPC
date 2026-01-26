@@ -39,6 +39,17 @@
 
   initTheme();
 
+  // 尝试申请持久化存储（Persistent Storage），以尽量让 CacheStorage 长期保留。
+  // 说明：浏览器/系统仍可能在极端情况下回收，但这能显著降低被清理概率。
+  (async function tryPersistStorage() {
+    try {
+      if (!navigator.storage || typeof navigator.storage.persisted !== 'function' || typeof navigator.storage.persist !== 'function') return;
+      const already = await navigator.storage.persisted();
+      if (already) return;
+      await navigator.storage.persist();
+    } catch (e) {}
+  })();
+
   window.MinechatTheme = {
     KEY,
     get: getTheme,
